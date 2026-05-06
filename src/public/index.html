@@ -260,10 +260,10 @@ async function leaveRoom(){if(!room||!myCharId)return;if(!confirm('确定离开�
 function startPoll(){stopPoll();pollTimer=setInterval(async()=>{if(!room)return;try{const r=await api('/api/rooms/'+encodeURIComponent(room.id));room=r;members=r.members||[];renderMembers();renderGM();}catch(e){}await renderOutgoing();await renderIncoming();},3000);}
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 
-function openKeyboard(title,callback){document.getElementById('keyboard-title').textContent=title||'输入';keyboardTarget=document.getElementById('keyboard-input');keyboardTarget.value='';keyboardCallback=callback;const g=document.getElementById('keyboard-grid');g.innerHTML='';KEY_ROWS.forEach(row=>{row.forEach(k=>{const b=document.createElement('button');b.className='btn';b.textContent=k;b.onclick=()=>{keyboardTarget.value+=k;};g.appendChild(b);});});showModal('keyboard-modal');}
+function openKeyboard(title,callback){document.getElementById('keyboard-title').textContent=title||'输入';keyboardTarget=document.getElementById('keyboard-input');keyboardTarget.value='';keyboardCallback=callback;const g=document.getElementById('keyboard-grid');g.innerHTML='';KEY_ROWS.forEach(row=>{row.forEach(k=>{const b=document.createElement('button');b.className='btn';b.type='button';b.textContent=k;b.onclick=()=>{if(keyboardTarget)keyboardTarget.value+=k;};g.appendChild(b);});});showModal('keyboard-modal');}
 function keyBackspace(){if(keyboardTarget)keyboardTarget.value=keyboardTarget.value.slice(0,-1);}
 function keyClear(){if(keyboardTarget)keyboardTarget.value='';}
-function closeKeyboard(ok){const val=keyboardTarget?keyboardTarget.value:'';hideModal('keyboard-modal');if(ok&&keyboardCallback)keyboardCallback(val);keyboardTarget=null;keyboardCallback=null;}
+function closeKeyboard(ok){const val=keyboardTarget?keyboardTarget.value:'';const cb=keyboardCallback;keyboardTarget=null;keyboardCallback=null;hideModal('keyboard-modal');if(ok&&cb)cb(val);}
 
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));}
 
