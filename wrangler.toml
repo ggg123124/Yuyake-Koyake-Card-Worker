@@ -1,0 +1,15 @@
+name = "xiyao-wanyao"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+JWT_SECRET = "xiyao-wanyao-dev-secret-change-in-production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "xiyao-wanyao-db"
+database_id = "local"
+
+[assets]
+directory = "./src/public"

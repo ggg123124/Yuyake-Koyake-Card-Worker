@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>夕妖晚谣工具</title>
+<style>
+:root{--primary:#E67E22;--primary-light:#F39C12;--primary-dark:#D35400;--bg:#FFF8F0;--card:#fff;--text:#333;--danger:#c0392b;--success:#27ae60;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:16px;line-height:1.5;min-height:100vh}
+.view{display:none;padding:12px;max-width:900px;margin:0 auto}
+.view.active{display:block}
+.card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;min-width:48px;padding:12px 20px;font-size:18px;border-radius:8px;border:none;cursor:pointer;touch-action:manipulation;transition:background .2s,color .2s,transform .1s;margin:4px}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark)}
+.btn-secondary{background:#eee;color:var(--text)}
+.btn-secondary:hover{background:#ddd}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:#a93226}
+.btn-lg{padding:16px 28px;font-size:20px}
+.btn-sm{padding:8px 14px;font-size:16px}
+input,select{width:100%;min-height:48px;padding:12px;font-size:18px;border:2px solid #ddd;border-radius:8px;margin:8px 0;background:#fff}
+input:focus,select:focus{outline:none;border-color:var(--primary)}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tab-btn{flex:1;padding:14px;font-size:18px;border:none;border-radius:8px;background:#eee;cursor:pointer}
+.tab-btn.active{background:var(--primary);color:#fff}
+.hidden{display:none!important}
+.topbar{background:var(--primary);color:#fff;padding:16px;border-radius:12px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.topbar b{font-size:18px}
+.tag{background:rgba(255,255,255,.2);padding:4px 10px;border-radius:6px;font-size:14px}
+.phase-badge{background:var(--primary-light);padding:6px 14px;border-radius:20px;font-size:16px;font-weight:700}
+.accordion .panel{background:var(--card);border-radius:12px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);overflow:hidden}
+.panel-title{background:var(--primary);color:#fff;padding:16px;font-size:18px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none;min-height:56px}
+.panel-title .chevron{transition:transform .2s}
+.panel-title.collapsed .chevron{transform:rotate(-90deg)}
+.panel:has(.panel-content.collapsed) .chevron{transform:rotate(-90deg)}
+.panel-content{padding:16px}
+.panel-content.collapsed{display:none}
+#outgoing-list,#incoming-content{overflow-x:auto}
+.member-row{display:flex;align-items:center;justify-content:space-between;padding:10px;border-bottom:1px solid #f0f0f0;min-height:48px}
+.member-row:last-child{border-bottom:none}
+.badge{padding:4px 10px;border-radius:6px;font-size:14px;background:#eee}
+.badge-gm{background:var(--primary-light);color:#fff}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px 8px;text-align:left;border-bottom:1px solid #eee;font-size:16px}
+th{background:#fafafa}
+.star-btn,.star{font-size:32px;width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;color:#ddd}
+.star-btn.active,.star.active{color:var(--primary-light)}
+.stars{display:inline-flex;gap:4px;vertical-align:middle}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
+.modal{background:var(--card);border-radius:16px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
+.modal h3{margin-bottom:16px;color:var(--primary);font-size:22px}
+.modal-actions{display:flex;gap:12px;margin-top:20px;justify-content:flex-end;flex-wrap:wrap}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;margin-bottom:8px;font-weight:700;font-size:16px}
+.grid-btns{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:10px}
+.grid-btns .btn{margin:0;height:56px;font-size:18px}
+.target-btn{width:100%;text-align:left;justify-content:flex-start}
+.toast{position:fixed;top:20px;right:20px;padding:16px 24px;border-radius:10px;color:#fff;font-size:18px;z-index:200;animation:slideIn .3s ease;max-width:90vw;word-break:break-word}
+.toast-success{background:var(--success)}
+.toast-error{background:var(--danger)}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes flash{0%{box-shadow:0 0 0 0 rgba(243,156,18,.7)}70%{box-shadow:0 0 0 12px rgba(243,156,18,0)}100%{box-shadow:0 0 0 0 rgba(243,156,18,0)}}
+.flash{animation:flash 1.5s ease infinite}
+.keyboard-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin:12px 0}
+.keyboard-grid .btn{min-width:0;padding:10px 4px;font-size:18px;margin:0;height:52px}
+.keyboard-input{width:100%;text-align:center;font-size:22px;margin-bottom:12px;background:#fafafa}
+.calc-result{background:#fafafa;padding:16px;border-radius:10px;margin-top:12px}
+.calc-result h4{margin-bottom:8px;color:var(--primary)}
+.calc-result ul{list-style:none;padding-left:0}
+.calc-result li{padding:4px 0}
+.empty{text-align:center;color:#999;padding:24px;font-size:18px}
+#lobby-actions{display:flex;flex-direction:column;gap:12px}
+#lobby-actions .btn{width:100%}
+a.btn{text-decoration:none}
+.room-info{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+@media(max-width:600px){.keyboard-grid{grid-template-columns:repeat(5,1fr)}.grid-btns{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<div id="view-login" class="view active">
+  <div class="card">
+    <h2 style="text-align:center;margin-bottom:20px;color:var(--primary)">夕妖晚谣工具</h2>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('login')">登录</button>
+      <button class="tab-btn" onclick="switchTab('register')">注册</button>
+    </div>
+    <div id="login-panel">
+      <input id="login-user" placeholder="用户名" autocomplete="username">
+      <input id="login-pass" type="password" placeholder="密码" autocomplete="current-password">
+      <button class="btn btn-primary btn-lg" style="width:100%" onclick="doLogin()">登录</button>
+    </div>
+    <div id="register-panel" class="hidden">
+      <input id="reg-user" placeholder="用户名" autocomplete="username">
+      <input id="reg-pass" type="password" placeholder="密码" autocomplete="new-password">
+      <input id="reg-name" placeholder="显示昵称">
+      <button class="btn btn-primary btn-lg" style="width:100%" onclick="doRegister()">注册</button>
+    </div>
+  </div>
+</div>
+
+<div id="view-lobby" class="view">
+  <div class="topbar" style="justify-content:space-between">
+    <div><b>房间大厅</b></div>
+    <div id="lobby-user"></div>
+  </div>
+  <div class="card" id="lobby-actions">
+    <button class="btn btn-primary btn-lg" onclick="showCreateRoom()">创建房间</button>
+    <button class="btn btn-primary btn-lg" onclick="showJoinRoom()">加入房间</button>
+    <a href="/character-editor.html" class="btn btn-secondary btn-lg" style="text-align:center">角色卡编辑</a>
+    <button class="btn btn-danger" onclick="doLogout()">退出登录</button>
+  </div>
+</div>
+
+<div id="view-room" class="view">
+  <div class="topbar">
+    <div class="room-info">
+      <b id="room-title"></b>
+      <span id="room-code" class="tag"></span>
+      <span id="room-phase" class="phase-badge"></span>
+    </div>
+    <div class="room-info">
+      <span>我: <b id="my-char-name"></b></span>
+      <span>梦点: <b id="my-dream"></b></span>
+      <button class="btn btn-danger btn-sm" onclick="leaveRoom()">离开房间</button>
+    </div>
+  </div>
+  <div class="accordion">
+    <div class="panel">
+      <div class="panel-title collapsed" onclick="toggleAccordion('members-content')">成员列表 <span class="chevron">▼</span></div>
+      <div id="members-content" class="panel-content collapsed"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title" onclick="toggleAccordion('outgoing-content')">我对他人的牵绊 <span class="chevron">▼</span></div>
+      <div id="outgoing-content" class="panel-content">
+        <button class="btn btn-primary" onclick="openBondModal()">添加牵绊</button>
+        <div id="outgoing-list" style="margin-top:12px"></div>
+      </div>
+    </div>
+    <div class="panel" id="panel-incoming">
+      <div class="panel-title collapsed" onclick="toggleAccordion('incoming-content')">他人对我的牵绊 <span class="chevron">▼</span></div>
+      <div id="incoming-content" class="panel-content collapsed"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title collapsed" onclick="toggleAccordion('calc-content')">奇迹点/心意点结算 <span class="chevron">▼</span></div>
+      <div id="calc-content" class="panel-content collapsed">
+        <button class="btn btn-primary btn-lg" style="width:100%" onclick="doCalculate()">结算</button>
+        <div id="calc-result"></div>
+      </div>
+    </div>
+    <div class="panel hidden" id="panel-gm">
+      <div class="panel-title collapsed" onclick="toggleAccordion('gm-content')">GM 面板 <span class="chevron">▼</span></div>
+      <div id="gm-content" class="panel-content collapsed">
+        <div class="form-group"><label>发放梦点</label><div id="gm-dream-targets"></div><div style="display:flex;align-items:center;gap:12px;margin-top:12px"><button class="btn btn-sm" onclick="adjustDream(-1)">-</button><b id="dream-amount" style="font-size:22px;min-width:40px;text-align:center">1</b><button class="btn btn-sm" onclick="adjustDream(1)">+</button><button class="btn btn-primary" onclick="doGiveDream()">确认发放</button></div></div>
+        <div class="form-group"><label>场景阶段</label><div class="grid-btns"><button class="btn btn-secondary" onclick="doSetPhase('scene')">场景中</button><button class="btn btn-secondary" onclick="doSetPhase('intermission')">幕间</button><button class="btn btn-secondary" onclick="doSetPhase('ending')">故事结束</button></div></div>
+        <div class="form-group"><label>调整角色</label><div id="gm-role-list"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-overlay" class="modal-overlay hidden" onclick="if(event.target===this)closeAllModals()">
+  <div id="bond-modal" class="modal hidden">
+    <h3>编辑牵绊</h3>
+    <div class="form-group"><label>目标角色</label><div id="bond-target-list" class="grid-btns"></div><button class="btn btn-sm" onclick="toggleManualTarget()">手动输入</button><input id="bond-target-input" class="hidden" placeholder="输入角色名"></div>
+    <div class="form-group"><label>牵绊类型</label><div id="bond-type-grid" class="grid-btns"></div><input id="bond-type-input" class="hidden" placeholder="自定义类型"></div>
+    <div class="form-group"><label>牵绊等级</label><div id="bond-level-stars" class="stars"></div></div>
+    <div class="modal-actions"><button class="btn btn-primary" onclick="saveBond()">确认</button><button class="btn" onclick="hideModal('bond-modal')">取消</button></div>
+  </div>
+  <div id="upgrade-modal" class="modal hidden">
+    <h3>升级牵绊</h3>
+    <p id="upgrade-info" style="font-size:18px"></p>
+    <div class="modal-actions"><button class="btn btn-primary" onclick="confirmUpgrade()">确认</button><button class="btn" onclick="hideModal('upgrade-modal')">取消</button></div>
+  </div>
+  <div id="keyboard-modal" class="modal hidden">
+    <h3 id="keyboard-title">输入</h3>
+    <input id="keyboard-input" class="keyboard-input" readonly>
+    <div id="keyboard-grid" class="keyboard-grid"></div>
+    <div class="modal-actions"><button class="btn" onclick="keyBackspace()">←</button><button class="btn" onclick="keyClear()">清空</button><button class="btn btn-primary" onclick="closeKeyboard(true)">确认</button><button class="btn" onclick="closeKeyboard(false)">取消</button></div>
+  </div>
+  <div id="charselect-modal" class="modal hidden">
+    <h3>选择角色卡</h3>
+    <div id="charselect-list"></div>
+    <div class="modal-actions"><button class="btn" onclick="hideModal('charselect-modal')">取消</button></div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+const LEVEL_COST={1:5,2:5,3:5,4:8,5:12};
+const PHASE_MAP={scene:'场景中',intermission:'幕间',ending:'故事结束'};
+const BOND_TYPES=[{n:'好感',c:'#FF85A2'},{n:'愛情',c:'#E74C3C'},{n:'保护',c:'#3498DB'},{n:'信任',c:'#2ECC71'},{n:'家族',c:'#A0522D'},{n:'憧憬',c:'#9B59B6'},{n:'競争',c:'#E67E22'},{n:'尊敬',c:'#F1C40F'},{n:'戀慕',c:'#C0392B'},{n:'收容',c:'#1ABC9C'}];
+const KEY_ROWS=[['1','2','3','4','5','6','7','8','9','0'],['Q','W','E','R','T','Y','U','I','O','P'],['A','S','D','F','G','H','J','K','L'],['Z','X','C','V','B','N','M']];
+let token=localStorage.getItem('token');
+let user=null,room=null,myCharId=null,myChar=null,members=[],isGM=false,pollTimer=null,lastIncoming='',keyboardTarget=null,keyboardCallback=null,selectedCharId=null,upgradeBondId=null,upgradeTarget=0;
+
+async function api(url,opts={}){opts.headers={...opts.headers,'Authorization':'Bearer '+(token||''),'Content-Type':'application/json'};const r=await fetch(url,opts);if(r.status===401){token=null;localStorage.removeItem('token');showView('login');throw new Error('登录已过期');}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'请求失败');return j;}
+function showView(v){document.querySelectorAll('.view').forEach(e=>e.classList.remove('active'));document.getElementById('view-'+v).classList.add('active');}
+function toast(msg,type='success'){const t=document.createElement('div');t.className='toast toast-'+type;t.textContent=msg;document.getElementById('toast-container').appendChild(t);setTimeout(()=>t.remove(),3000);}
+function showModal(id){document.getElementById('modal-overlay').classList.remove('hidden');document.getElementById(id).classList.remove('hidden');}
+function hideModal(id){document.getElementById(id).classList.add('hidden');if(!document.querySelectorAll('.modal:not(.hidden)').length)document.getElementById('modal-overlay').classList.add('hidden');}
+function closeAllModals(){document.querySelectorAll('.modal').forEach(e=>e.classList.add('hidden'));document.getElementById('modal-overlay').classList.add('hidden');}
+function toggleAccordion(id){const el=document.getElementById(id);el.classList.toggle('collapsed');el.previousElementSibling.classList.toggle('collapsed');}
+function switchTab(t){document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',(t==='login'?0:1)===i));document.getElementById('login-panel').classList.toggle('hidden',t!=='login');document.getElementById('register-panel').classList.toggle('hidden',t!=='register');}
+
+async function doLogin(){const u=document.getElementById('login-user').value.trim(),p=document.getElementById('login-pass').value;if(!u||!p){toast('请输入用户名和密码','error');return;}try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:u,password:p})});token=r.token;localStorage.setItem('token',token);user=r.user;showLobby();}catch(e){toast(e.message,'error');}}
+async function doRegister(){const u=document.getElementById('reg-user').value.trim(),p=document.getElementById('reg-pass').value,n=document.getElementById('reg-name').value.trim();if(!u||!p){toast('请输入用户名和密码','error');return;}try{const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({username:u,password:p,displayName:n||u})});token=r.token;localStorage.setItem('token',token);user=r.user;showLobby();}catch(e){toast(e.message,'error');}}
+function doLogout(){token=null;localStorage.removeItem('token');user=null;showView('login');}
+
+async function showLobby(){try{user=await api('/api/auth/me');}catch(e){token=null;localStorage.removeItem('token');showView('login');return;}document.getElementById('lobby-user').textContent='欢迎，'+user.displayName;showView('lobby');}
+
+function showCreateRoom(){openKeyboard('输入房间代码',async(code)=>{if(!code)return;openKeyboard('输入房间名称（可选）',async(name)=>{try{await api('/api/rooms',{method:'POST',body:JSON.stringify({id:code,name:name||''})});toast('房间创建成功');await pickCharacterAndJoin(code);}catch(e){toast(e.message,'error');}});});}
+function showJoinRoom(){openKeyboard('输入房间代码',async(code)=>{if(!code)return;await pickCharacterAndJoin(code);});}
+
+async function pickCharacterAndJoin(roomCode){try{const chars=await api('/api/characters');if(!chars.length){toast('请先创建角色卡','error');return;}if(chars.length===1){await joinWithChar(roomCode,chars[0].id);return;}const list=document.getElementById('charselect-list');list.innerHTML='';chars.forEach(c=>{const b=document.createElement('button');b.className='btn btn-secondary target-btn';b.textContent=(c.name||'未命名')+' ('+(c.true_form||'')+')';b.onclick=async()=>{hideModal('charselect-modal');await joinWithChar(roomCode,c.id);};list.appendChild(b);});showModal('charselect-modal');}catch(e){toast(e.message,'error');}}
+async function joinWithChar(roomCode,charId){try{await api('/api/rooms/'+encodeURIComponent(roomCode)+'/join',{method:'POST',body:JSON.stringify({characterId:charId})});selectedCharId=charId;await enterRoom(roomCode);}catch(e){toast(e.message,'error');}}
+
+async function enterRoom(code){try{const r=await api('/api/rooms/'+encodeURIComponent(code));room=r;members=r.members||[];myCharId=members.find(m=>m.userId===user.id)?.characterId||selectedCharId;isGM=members.find(m=>m.characterId===myCharId)?.role==='gm'||r.gmUserId===user.id;if(myCharId){myChar=await api('/api/characters/'+myCharId);}document.getElementById('panel-gm').classList.toggle('hidden',!isGM);showView('room');renderRoom();startPoll();}catch(e){toast(e.message,'error');}}
+
+function renderRoom(){if(!room)return;document.getElementById('room-title').textContent=room.name||'未命名房间';document.getElementById('room-code').textContent=room.id;document.getElementById('room-phase').textContent=PHASE_MAP[room.phase]||room.phase;document.getElementById('my-char-name').textContent=myChar?.name||'未知';document.getElementById('my-dream').textContent=myChar?.dream_points??0;renderMembers();renderOutgoing();renderGM();}
+
+function renderMembers(){const c=document.getElementById('members-content');if(!members.length){c.innerHTML='<div class="empty">暂无成员</div>';return;}c.innerHTML=members.map(m=>`<div class="member-row"><div><b>${esc(m.character?.name||'未知')}</b> <span style="color:#999">${esc(m.character?.trueForm||'')}</span></div><span class="badge ${m.role==='gm'?'badge-gm':''}">${m.role==='gm'?'GM':'玩家'}</span></div>`).join('');}
+
+async function renderOutgoing(){if(!room||!myCharId)return;try{const bonds=await api('/api/bonds?room_id='+encodeURIComponent(room.id)+'&character_id='+encodeURIComponent(myCharId));const c=document.getElementById('outgoing-list');if(!bonds.length){c.innerHTML='<div class="empty">暂无牵绊</div>';return;}let h='<table><thead><tr><th>目标</th><th>类型</th><th>等级</th><th>操作</th></tr></thead><tbody>';bonds.forEach(b=>{h+=`<tr><td>${esc(b.toCharacterName)}</td><td>${esc(b.bondType)}</td><td>${stars(b.bondLevel||1,5,true,b.id)}</td><td><button class="btn btn-danger btn-sm" onclick="deleteBond('${b.id}')">删除</button></td></tr>`;});h+='</tbody></table>';c.innerHTML=h;}catch(e){/* ignore poll errors */}}
+
+async function renderIncoming(){if(!room||!myCharId)return;try{const bonds=await api('/api/bonds/incoming?room_id='+encodeURIComponent(room.id)+'&character_id='+encodeURIComponent(myCharId));const c=document.getElementById('incoming-content');const snap=JSON.stringify(bonds.map(b=>({id:b.id,level:b.bondLevel})).sort((a,b)=>a.id.localeCompare(b.id)));if(lastIncoming!==''&&lastIncoming!==snap){document.getElementById('panel-incoming').classList.add('flash');setTimeout(()=>document.getElementById('panel-incoming').classList.remove('flash'),2000);}lastIncoming=snap;if(!bonds.length){c.innerHTML='<div class="empty">暂无牵绊</div>';return;}let h='<table><thead><tr><th>来源</th><th>类型</th><th>等级</th></tr></thead><tbody>';bonds.forEach(b=>{const from=members.find(m=>m.characterId===b.fromCharacterId);const name=from?from.character?.name:b.fromCharacterId;h+=`<tr><td>${esc(name||'未知')}</td><td>${esc(b.bondType)}</td><td>${stars(b.bondLevel||1,5,false)}</td></tr>`;});h+='</tbody></table>';c.innerHTML=h;}catch(e){}}
+
+function renderGM(){if(!isGM||!room)return;const dt=document.getElementById('gm-dream-targets');dt.innerHTML='';members.forEach(m=>{const b=document.createElement('button');b.className='btn btn-secondary target-btn gm-dream-btn';b.textContent=(m.character?.name||'未知')+' ('+(m.character?.trueForm||'')+')';b.dataset.cid=m.characterId;b.onclick=()=>{document.querySelectorAll('.gm-dream-btn').forEach(x=>x.style.border='');b.style.border='3px solid var(--primary)';dt.dataset.selected=m.characterId;};dt.appendChild(b);});const rl=document.getElementById('gm-role-list');rl.innerHTML='';members.forEach(m=>{const d=document.createElement('div');d.className='member-row';d.innerHTML=`<span><b>${esc(m.character?.name||'未知')}</b></span><div><button class="btn btn-sm" onclick="doToggleRole('${m.characterId}','${m.role==='gm'?'player':'gm'}')">${m.role==='gm'?'设为玩家':'设为GM'}</button></div>`;rl.appendChild(d);});}
+
+function stars(n,max,interactive,id){let h='<span class="stars">';for(let i=1;i<=max;i++){const f=i<=n?'★':'☆';const cl=interactive?'star-btn':'star';const oc=interactive?`onclick="onStarClick('${id}',${i},${n})"`:'';h+=`<span class="${cl} ${i<=n?'active':''}" ${oc}>${f}</span>`;}return h+'</span>';}
+function onStarClick(id,clicked,current){if(clicked<=current)return;upgradeBondId=id;upgradeTarget=clicked;const cost=calcCost(current,clicked,(myChar?.weaknesses)||[],(myChar?.weaknesses)||[]);const rem=(myChar?.dream_points||0)-cost.total;let costDetail=`基础 ${cost.base} + 弱点加值 ${cost.modifier}`;if(cost.abilityDiscount)costDetail+=` + 特技减免 ${cost.abilityDiscount}`;document.getElementById('upgrade-info').innerHTML=`从 ${current} 级升级到 ${clicked} 级<br>消耗梦点: <b>${cost.total}</b> (${costDetail})<br>升级后剩余梦点: <b>${rem}</b>`;showModal('upgrade-modal');}
+function calcCost(cur,tgt,toWeak,fromWeak){
+  // 前端估算：真实梦点消耗由后端根据目标角色弱点计算
+  let base=0;for(let i=cur+1;i<=tgt;i++)base+=LEVEL_COST[i]||0;
+  let mod=0;for(const w of(toWeak||[])){const name=typeof w==='string'?w:(w&&w.name);if(typeof name==='string'&&(name.includes('装腔作势')||name.includes('囂俳')))mod+=2;}
+  let disc=0;for(const w of(fromWeak||[])){const name=typeof w==='string'?w:(w&&w.name);if(typeof name==='string'&&(name.includes('寂寞难耐')||name.includes('寂しがり屋')))disc=-1;}
+  return{base,modifier:mod,abilityDiscount:disc,total:Math.max(0,base+mod+disc)};
+}
+async function confirmUpgrade(){try{const r=await api('/api/bonds/upgrade',{method:'POST',body:JSON.stringify({bondId:upgradeBondId,targetLevel:upgradeTarget})});myChar.dream_points=r.remainingDreamPoints;document.getElementById('my-dream').textContent=r.remainingDreamPoints;hideModal('upgrade-modal');toast('升级成功！消耗 '+r.cost+' 梦点');renderOutgoing();renderIncoming();}catch(e){toast(e.message,'error');}}
+async function deleteBond(id){if(!confirm('确定删除此牵绊？'))return;try{await api('/api/bonds/'+id,{method:'DELETE'});toast('已删除');renderOutgoing();renderIncoming();}catch(e){toast(e.message,'error');}}
+
+function openBondModal(){const tl=document.getElementById('bond-target-list');tl.innerHTML='';members.filter(m=>m.characterId!==myCharId).forEach(m=>{const b=document.createElement('button');b.className='btn btn-secondary';b.textContent=m.character?.name||'未知';b.onclick=()=>{document.querySelectorAll('#bond-target-list .btn').forEach(x=>x.style.border='');b.style.border='4px solid var(--primary-dark)';tl.dataset.name=m.character?.name;tl.dataset.id=m.characterId;document.getElementById('bond-target-input').classList.add('hidden');};tl.appendChild(b);});const tg=document.getElementById('bond-type-grid');tg.innerHTML='';BOND_TYPES.forEach(t=>{const b=document.createElement('button');b.className='btn';b.textContent=t.n;b.style.background=t.c;b.style.color='#fff';b.onclick=()=>{document.querySelectorAll('#bond-type-grid .btn').forEach(x=>x.style.border='');b.style.border='4px solid var(--primary-dark)';tg.dataset.type=t.n;document.getElementById('bond-type-input').classList.add('hidden');};tg.appendChild(b);});renderBondStars(1);document.getElementById('bond-target-input').value='';document.getElementById('bond-target-input').classList.add('hidden');document.getElementById('bond-type-input').value='';document.getElementById('bond-type-input').classList.add('hidden');delete tl.dataset.name;delete tl.dataset.id;delete tg.dataset.type;showModal('bond-modal');}
+function toggleManualTarget(){document.getElementById('bond-target-input').classList.toggle('hidden');document.getElementById('bond-target-list').querySelectorAll('.btn').forEach(x=>x.style.border='');delete document.getElementById('bond-target-list').dataset.name;delete document.getElementById('bond-target-list').dataset.id;}
+function renderBondStars(sel){const c=document.getElementById('bond-level-stars');c.innerHTML='';for(let i=1;i<=5;i++){const s=document.createElement('span');s.className='star-btn '+(i<=sel?'active':'');s.textContent=i<=sel?'★':'☆';s.onclick=()=>renderBondStars(i);c.appendChild(s);}c.dataset.level=sel;}
+async function saveBond(){const tl=document.getElementById('bond-target-list');const tg=document.getElementById('bond-type-grid');const name=document.getElementById('bond-target-input').classList.contains('hidden')?(tl.dataset.name||''):document.getElementById('bond-target-input').value.trim();const type=document.getElementById('bond-type-input').classList.contains('hidden')?(tg.dataset.type||''):document.getElementById('bond-type-input').value.trim();const level=parseInt(document.getElementById('bond-level-stars').dataset.level||'1');if(!name){toast('请选择目标角色','error');return;}if(!type){toast('请选择牵绊类型','error');return;}try{await api('/api/bonds',{method:'POST',body:JSON.stringify({roomId:room.id,fromCharacterId:myCharId,toCharacterName:name,toCharacterId:tl.dataset.id||null,bondType:type,bondLevel:level})});hideModal('bond-modal');toast('牵绊已保存');renderOutgoing();}catch(e){toast(e.message,'error');}}
+
+async function doCalculate(){if(!room||!myCharId)return;try{const r=await api('/api/calculate/'+encodeURIComponent(room.id)+'/'+encodeURIComponent(myCharId),{method:'POST'});let h='<div class="calc-result">';h+='<h4>奇迹点: '+r.wonderPoints+'</h4><ul>'+(r.details?.wonderBonds||[]).map(b=>'<li>'+esc(b.toCharacterName)+' Lv.'+b.level+'</li>').join('')+'</ul>';h+='<h4>心意点: '+r.feelingPoints+'</h4><ul>'+(r.details?.feelingBonds||[]).map(b=>{const from=members.find(m=>m.characterId===b.fromCharacterId);return'<li>来自 '+esc(from?.character?.name||b.fromCharacterId)+' Lv.'+b.level+'</li>';}).join('')+'</ul>';if(r.details?.intenseBonus)h+='<p><b>强烈牵绊加成: +'+r.details.intenseBonus+'</b></p>';h+='</div>';document.getElementById('calc-result').innerHTML=h;toast('结算完成');}catch(e){toast(e.message,'error');}}
+
+function adjustDream(d){const el=document.getElementById('dream-amount');let v=parseInt(el.textContent)+d;if(v<1)v=1;el.textContent=v;}
+async function doGiveDream(){const dt=document.getElementById('gm-dream-targets');const cid=dt.dataset.selected;if(!cid){toast('请选择目标角色','error');return;}const amt=parseInt(document.getElementById('dream-amount').textContent);try{await api('/api/rooms/'+encodeURIComponent(room.id)+'/give-dream',{method:'POST',body:JSON.stringify({characterId:cid,amount:amt})});toast('已发放 '+amt+' 梦点');const m=members.find(x=>x.characterId===cid);if(m&&m.character)m.character.dream_points=(m.character.dream_points||0)+amt;if(cid===myCharId&&myChar)myChar.dream_points=(myChar.dream_points||0)+amt;renderRoom();}catch(e){toast(e.message,'error');}}
+async function doSetPhase(p){try{await api('/api/rooms/'+encodeURIComponent(room.id)+'/set-phase',{method:'POST',body:JSON.stringify({phase:p})});room.phase=p;renderRoom();toast('场景已更新');}catch(e){toast(e.message,'error');}}
+async function doToggleRole(cid,role){try{await api('/api/rooms/'+encodeURIComponent(room.id)+'/role',{method:'PUT',body:JSON.stringify({characterId:cid,role})});toast('角色已调整');const r=await api('/api/rooms/'+encodeURIComponent(room.id));room=r;members=r.members||[];renderRoom();}catch(e){toast(e.message,'error');}}
+
+async function leaveRoom(){if(!room||!myCharId)return;if(!confirm('确定离开房间？'))return;try{await api('/api/rooms/'+encodeURIComponent(room.id)+'/leave',{method:'POST',body:JSON.stringify({characterId:myCharId})});stopPoll();room=null;myCharId=null;myChar=null;members=[];showLobby();toast('已离开房间');}catch(e){toast(e.message,'error');}}
+
+function startPoll(){stopPoll();pollTimer=setInterval(async()=>{if(!room)return;try{const r=await api('/api/rooms/'+encodeURIComponent(room.id));room=r;members=r.members||[];renderMembers();renderGM();}catch(e){}await renderOutgoing();await renderIncoming();},3000);}
+function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
+
+function openKeyboard(title,callback){document.getElementById('keyboard-title').textContent=title||'输入';keyboardTarget=document.getElementById('keyboard-input');keyboardTarget.value='';keyboardCallback=callback;const g=document.getElementById('keyboard-grid');g.innerHTML='';KEY_ROWS.forEach(row=>{row.forEach(k=>{const b=document.createElement('button');b.className='btn';b.textContent=k;b.onclick=()=>{keyboardTarget.value+=k;};g.appendChild(b);});});showModal('keyboard-modal');}
+function keyBackspace(){if(keyboardTarget)keyboardTarget.value=keyboardTarget.value.slice(0,-1);}
+function keyClear(){if(keyboardTarget)keyboardTarget.value='';}
+function closeKeyboard(ok){const val=keyboardTarget?keyboardTarget.value:'';hideModal('keyboard-modal');if(ok&&keyboardCallback)keyboardCallback(val);keyboardTarget=null;keyboardCallback=null;}
+
+function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));}
+
+async function init(){if(token){try{user=await api('/api/auth/me');showLobby();}catch(e){token=null;localStorage.removeItem('token');showView('login');}}else{showView('login');}}
+init();
+</script>
+</body>
+</html>

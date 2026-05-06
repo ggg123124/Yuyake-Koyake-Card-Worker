@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>夕妖晚谣 - 角色卡编辑</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: #fdf6f0;
+      color: #333;
+      line-height: 1.6;
+      padding-bottom: 40px;
+    }
+
+    /* 标题栏 */
+    .header {
+      background: #E67E22;
+      color: #fff;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      box-shadow: 0 2px 6px rgba(230,126,34,0.3);
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* 按钮 */
+    .btn {
+      border: none;
+      border-radius: 4px;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .btn-primary {
+      background: #E67E22;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #d35400; }
+    .btn-secondary {
+      background: #f39c12;
+      color: #fff;
+    }
+    .btn-secondary:hover { background: #e67e22; }
+    .btn-danger {
+      background: #c0392b;
+      color: #fff;
+    }
+    .btn-danger:hover { background: #a93226; }
+    .btn-small {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+    .btn-step {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      font-size: 18px;
+      font-weight: bold;
+      line-height: 32px;
+    }
+
+    /* 容器 */
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    /* 区域卡片 */
+    .section {
+      background: #fff;
+      border: 2px solid #E67E22;
+      border-radius: 0;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      background: #E67E22;
+      color: #fff;
+      padding: 10px 16px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .section-body {
+      padding: 16px;
+    }
+
+    /* 表单布局 */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 12px 16px;
+      align-items: center;
+    }
+    .form-grid label {
+      font-weight: 600;
+      color: #555;
+      text-align: right;
+    }
+    .form-grid input[type="text"],
+    .form-grid input[type="number"],
+    .form-grid select,
+    .form-grid textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #e0a060;
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 14px;
+      background: #fff;
+    }
+    .form-grid input:focus,
+    .form-grid select:focus,
+    .form-grid textarea:focus {
+      outline: none;
+      border-color: #E67E22;
+      box-shadow: 0 0 0 2px rgba(230,126,34,0.15);
+    }
+    .form-grid textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+    .form-grid.full-row {
+      grid-column: 1 / -1;
+    }
+
+    /* 真身选择按钮组 */
+    .true-form-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .true-form-btn {
+      border: 2px solid #E67E22;
+      background: #fff;
+      color: #E67E22;
+      padding: 8px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .true-form-btn:hover {
+      background: #fdebd0;
+    }
+    .true-form-btn.active {
+      background: #E67E22;
+      color: #fff;
+    }
+
+    /* 属性区域 */
+    .attrs-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+    .attr-item {
+      text-align: center;
+      border: 1px solid #f0c090;
+      padding: 12px 8px;
+      background: #fff8f0;
+    }
+    .attr-name {
+      font-weight: 700;
+      color: #E67E22;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+    .attr-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .attr-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #333;
+      min-width: 36px;
+      text-align: center;
+    }
+    .attr-range {
+      font-size: 12px;
+      color: #888;
+    }
+    .attr-sum {
+      text-align: center;
+      margin-top: 12px;
+      padding: 10px;
+      border: 2px dashed #E67E22;
+      background: #fff8f0;
+      font-weight: 600;
+    }
+    .attr-sum.warning {
+      border-color: #c0392b;
+      color: #c0392b;
+      background: #fdeaea;
+    }
+
+    /* 表格 */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .data-table th,
+    .data-table td {
+      border: 1px solid #e0a060;
+      padding: 10px 12px;
+      text-align: center;
+    }
+    .data-table th {
+      background: #fdebd0;
+      color: #a0522d;
+      font-weight: 700;
+    }
+    .data-table td {
+      background: #fff;
+    }
+    .data-table tr:nth-child(even) td {
+      background: #fff8f0;
+    }
+
+    /* 能力列表 */
+    .ability-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+    .ability-item {
+      border: 1px solid #f0c090;
+      padding: 10px 12px;
+      background: #fff8f0;
+      border-radius: 3px;
+      font-size: 14px;
+    }
+    .ability-name {
+      font-weight: 700;
+      color: #a0522d;
+    }
+    .ability-cost {
+      color: #E67E22;
+      font-weight: 600;
+    }
+
+    /* 弱点/追加能力 */
+    .item-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .item-row {
+      display: grid;
+      grid-template-columns: 1fr 2fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #f0c090;
+      padding: 10px;
+      background: #fff8f0;
+    }
+    .item-row input[type="text"] {
+      padding: 6px 8px;
+      border: 1px solid #e0a060;
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    .item-row input:focus {
+      outline: none;
+      border-color: #E67E22;
+    }
+    .preset-select {
+      margin-bottom: 10px;
+    }
+    .preset-select select {
+      padding: 6px 10px;
+      border: 1px solid #e0a060;
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 14px;
+      min-width: 180px;
+    }
+
+    /* 点数显示 */
+    .points-bar {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .point-box {
+      text-align: center;
+      border: 2px solid #E67E22;
+      padding: 12px 24px;
+      min-width: 100px;
+    }
+    .point-label {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 4px;
+    }
+    .point-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #E67E22;
+    }
+
+    /* 角色列表弹窗 */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #fff;
+      border: 2px solid #E67E22;
+      max-width: 520px;
+      width: 100%;
+      max-height: 80vh;
+      overflow: auto;
+    }
+    .modal-header {
+      background: #E67E22;
+      color: #fff;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-header h2 {
+      font-size: 16px;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 22px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .modal-body {
+      padding: 16px;
+    }
+    .char-list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid #f0c090;
+      margin-bottom: 8px;
+      cursor: pointer;
+      background: #fff;
+      transition: background 0.15s;
+    }
+    .char-list-item:hover {
+      background: #fff0e0;
+    }
+    .char-list-name {
+      font-weight: 600;
+      color: #a0522d;
+    }
+    .char-list-meta {
+      font-size: 12px;
+      color: #888;
+    }
+
+    /* 提示消息 */
+    .toast {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 24px;
+      border-radius: 4px;
+      color: #fff;
+      font-weight: 600;
+      z-index: 2000;
+      display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    .toast.show { display: block; }
+    .toast.success { background: #27ae60; }
+    .toast.error { background: #c0392b; }
+
+    /* 未登录提示 */
+    .login-tip {
+      text-align: center;
+      padding: 60px 20px;
+    }
+    .login-tip h2 {
+      color: #E67E22;
+      margin-bottom: 16px;
+    }
+
+    /* 弱点选择 */
+    .weakness-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid #f0c090;
+      background: #fff8f0;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .weakness-option:hover {
+      background: #fff0e0;
+    }
+    .weakness-option input[type="checkbox"] {
+      margin-top: 3px;
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .weakness-option.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .weakness-name {
+      font-weight: 700;
+      color: #a0522d;
+      margin-bottom: 2px;
+    }
+    .weakness-desc {
+      font-size: 13px;
+      color: #666;
+      line-height: 1.4;
+    }
+    .ability-display {
+      border: 1px solid #e0a060;
+      padding: 10px 12px;
+      background: #fff8f0;
+      margin-bottom: 8px;
+    }
+    .ability-display-name {
+      font-weight: 700;
+      color: #E67E22;
+    }
+    .ability-display-cost {
+      color: #a0522d;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .ability-display-desc {
+      font-size: 13px;
+      color: #666;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .ability-none {
+      color: #888;
+      font-style: italic;
+    }
+
+    /* 响应式 */
+    @media (max-width: 640px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+      .form-grid label {
+        text-align: left;
+      }
+      .attrs-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .item-row {
+        grid-template-columns: 1fr;
+      }
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>夕妖晚谣 - 角色卡编辑</h1>
+  <div class="header-actions">
+    <button class="btn btn-secondary" id="btn-new">新建角色卡</button>
+    <button class="btn btn-secondary" id="btn-load">加载我的角色卡</button>
+    <button class="btn btn-primary" id="btn-save">保存角色卡</button>
+  </div>
+</div>
+
+<div class="container" id="editor-container" style="display:none;">
+
+  <!-- 基础信息 -->
+  <div class="section">
+    <div class="section-title">基础信息</div>
+    <div class="section-body">
+      <div class="form-grid">
+        <label>角色名称</label>
+        <div><input type="text" id="char-name" placeholder="输入角色名称"></div>
+
+        <label>真身</label>
+        <div class="true-form-group">
+          <button class="true-form-btn" data-form="狐">狐</button>
+          <button class="true-form-btn" data-form="狸">狸</button>
+          <button class="true-form-btn" data-form="猫">猫</button>
+          <button class="true-form-btn" data-form="犬">犬</button>
+          <button class="true-form-btn" data-form="兔">兔</button>
+          <button class="true-form-btn" data-form="鸟">鸟</button>
+        </div>
+
+        <label>人形年龄</label>
+        <div><input type="number" id="char-age" min="0" max="200" placeholder="输入年龄"></div>
+
+        <label>性别</label>
+        <div>
+          <select id="char-gender">
+            <option value="">请选择</option>
+            <option value="男">男</option>
+            <option value="女">女</option>
+            <option value="其他">其他</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 四维属性 -->
+  <div class="section">
+    <div class="section-title">四维属性（合计最多8点）</div>
+    <div class="section-body">
+      <div class="attrs-grid">
+        <div class="attr-item">
+          <div class="attr-name">变化</div>
+          <div class="attr-controls">
+            <button class="btn btn-primary btn-step" data-attr="henge" data-delta="-1">-</button>
+            <div class="attr-value" id="val-henge">1</div>
+            <button class="btn btn-primary btn-step" data-attr="henge" data-delta="1">+</button>
+          </div>
+          <div class="attr-range">1 ~ 4</div>
+        </div>
+        <div class="attr-item">
+          <div class="attr-name">野性</div>
+          <div class="attr-controls">
+            <button class="btn btn-primary btn-step" data-attr="animal" data-delta="-1">-</button>
+            <div class="attr-value" id="val-animal">1</div>
+            <button class="btn btn-primary btn-step" data-attr="animal" data-delta="1">+</button>
+          </div>
+          <div class="attr-range">1 ~ 4</div>
+        </div>
+        <div class="attr-item">
+          <div class="attr-name">涉世</div>
+          <div class="attr-controls">
+            <button class="btn btn-primary btn-step" data-attr="adult" data-delta="-1">-</button>
+            <div class="attr-value" id="val-adult">0</div>
+            <button class="btn btn-primary btn-step" data-attr="adult" data-delta="1">+</button>
+          </div>
+          <div class="attr-range">0 ~ 4</div>
+        </div>
+        <div class="attr-item">
+          <div class="attr-name">童真</div>
+          <div class="attr-controls">
+            <button class="btn btn-primary btn-step" data-attr="child" data-delta="-1">-</button>
+            <div class="attr-value" id="val-child">1</div>
+            <button class="btn btn-primary btn-step" data-attr="child" data-delta="1">+</button>
+          </div>
+          <div class="attr-range">1 ~ 4</div>
+        </div>
+      </div>
+      <div class="attr-sum" id="attr-sum">
+        已分配：<span id="sum-value">3</span> / 8 点
+      </div>
+    </div>
+  </div>
+
+  <!-- 形象描述 -->
+  <div class="section">
+    <div class="section-title">形象描述</div>
+    <div class="section-body">
+      <div class="form-grid">
+        <label>人类形象</label>
+        <div><textarea id="desc-human" placeholder="描述角色的人类外貌、穿着等"></textarea></div>
+
+        <label>真身形象</label>
+        <div><textarea id="desc-true" placeholder="描述角色的动物形态外貌"></textarea></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 变身耗用表 -->
+  <div class="section">
+    <div class="section-title">变身耗用表</div>
+    <div class="section-body">
+      <table class="data-table" id="transform-table">
+        <thead>
+          <tr>
+            <th>时段</th>
+            <th>完全人形</th>
+            <th id="th-partial-1">尾巴露出</th>
+            <th id="th-partial-2">耳朵和尾巴都露出</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>白天</strong></td>
+            <td>+4</td>
+            <td id="td-day-p1">+2</td>
+            <td id="td-day-p2">±0</td>
+          </tr>
+          <tr>
+            <td><strong>黄昏</strong></td>
+            <td>±0</td>
+            <td id="td-dusk-p1">±0</td>
+            <td id="td-dusk-p2">±0</td>
+          </tr>
+          <tr>
+            <td><strong>夜晚</strong></td>
+            <td>+2</td>
+            <td id="td-night-p1">±0</td>
+            <td id="td-night-p2">+2</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top:10px;font-size:13px;color:#888;">※ 变身耗用值自动根据真身类型计算。最低消耗形态不需要消耗奇迹点。</p>
+    </div>
+  </div>
+
+  <!-- 基本能力 -->
+  <div class="section">
+    <div class="section-title">基本能力</div>
+    <div class="section-body">
+      <div class="ability-list" id="ability-list">
+        <p style="color:#888;font-size:14px;">请先选择真身以显示能力。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弱点与追加能力 -->
+  <div class="section">
+    <div class="section-title">弱点与追加能力（1~3个）</div>
+    <div class="section-body">
+      <p id="weakness-hint" style="color:#888;font-size:14px;margin-bottom:10px;">请先选择真身以显示弱点列表。</p>
+      <div id="weakness-ability-list"></div>
+      <div id="selected-abilities" style="margin-top:16px;"></div>
+    </div>
+  </div>
+
+  <!-- 梦点数/回忆 -->
+  <div class="section">
+    <div class="section-title">点数与回忆</div>
+    <div class="section-body">
+      <div class="points-bar">
+        <div class="point-box">
+          <div class="point-label">梦点数</div>
+          <div class="point-value" id="point-dream">0</div>
+        </div>
+        <div class="point-box">
+          <div class="point-label">奇迹点</div>
+          <div class="point-value" id="point-wonder">0</div>
+        </div>
+        <div class="point-box">
+          <div class="point-label">心意点</div>
+          <div class="point-value" id="point-feeling">0</div>
+        </div>
+        <div class="point-box">
+          <div class="point-label">回忆</div>
+          <div class="point-value" id="point-memories">0</div>
+        </div>
+      </div>
+      <p style="text-align:center;margin-top:10px;font-size:13px;color:#888;">※ 梦点数由 GM 发放，游戏过程中自动计算奇迹点和心意点。</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- 未登录提示 -->
+<div class="container" id="login-tip" style="display:none;">
+  <div class="login-tip">
+    <h2>未登录</h2>
+    <p style="margin-bottom:20px;color:#666;">请先登录后再编辑角色卡。</p>
+    <button class="btn btn-primary" onclick="location.href='/'">返回主页登录</button>
+  </div>
+</div>
+
+<!-- 角色列表弹窗 -->
+<div class="modal-overlay" id="modal-load">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>选择要加载的角色卡</h2>
+      <button class="modal-close" id="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="char-list-body">
+      <p style="color:#888;text-align:center;">暂无角色卡</p>
+    </div>
+  </div>
+</div>
+
+<!-- 提示消息 -->
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ========== 数据定义 ==========
+
+  const ABILITIES_DATA = {
+    狐: [
+      { name: '小恶魔气', cost: 0 },
+      { name: '梦中启示', cost: 6 },
+      { name: '盘桓幽火', cost: 6 },
+      { name: '隐身蓑衣', cost: 8 },
+      { name: '偷天换日', cost: 10 },
+      { name: '狐之婚礼', cost: 12 },
+    ],
+    狸: [
+      { name: '点石成金', cost: 2 },
+      { name: '化身妖怪', cost: 8 },
+      { name: '千变万化', cost: 8 },
+      { name: '模仿专家', cost: 10 },
+      { name: '狸之腹鼓', cost: 12 },
+      { name: '如梦似幻', cost: 16 },
+    ],
+    猫: [
+      { name: '路边野猫', cost: 0 },
+      { name: '一团毛球', cost: 4 },
+      { name: '心灵探查', cost: 6 },
+      { name: '蹑手蹑脚', cost: 8 },
+      { name: '秘密路线', cost: 10 },
+      { name: '猫合之众', cost: 14 },
+    ],
+    犬: [
+      { name: '路边野狗', cost: 0 },
+      { name: '亲密无间', cost: 4 },
+      { name: '摇头摆尾', cost: 6 },
+      { name: '百般抚慰', cost: 6 },
+      { name: '舍己为人', cost: 8 },
+      { name: '狂犬狂吠', cost: 10 },
+    ],
+    兔: [
+      { name: '可爱迷人', cost: 0 },
+      { name: '请用团子', cost: 1 },
+      { name: '垂头丧气', cost: 3 },
+      { name: '援助之手', cost: 6 },
+      { name: '假装糊涂', cost: 8 },
+      { name: '银月之光', cost: 20 },
+    ],
+    鸟: [
+      { name: '一只小鸟', cost: 0 },
+      { name: '自由之翼', cost: 2 },
+      { name: '疾风之诗', cost: 4 },
+      { name: '授人以翼', cost: 8 },
+      { name: '流言蜚语', cost: 10 },
+      { name: '羽翼为枕', cost: 12 },
+    ],
+  };
+
+  const WEAKNESS_ABILITY_DATA = {
+    '狐': [
+      { weakness: '油炸豆腐', weaknessDesc: '狐最喜欢吃的就是油炸豆腐。看到油炸豆腐的时候，狐的变身会稍微解除一些。也就是说，如果是完全人类的状态的话，尾巴会露出来。如果是露出尾巴的状态的话，耳朵会露出来。如果是耳朵和尾巴都露出来的状态的话，就会完全变回动物的姿态。', ability: '吹牛大王', abilityCost: 8, abilityDesc: '可以让对方相信自己说出来的任何谎话。通过比较对方的【涉世】属性和狐的【变化】属性，如果狐的【变化】属性较高的话，对方就会被骗过。只要不是证据摆在眼前的谎话，对方都会不加以怀疑地相信。' },
+      { weakness: '鬼鬼祟祟', weaknessDesc: '狐不能让别人看到自己的真身。要是完全的狐狸状态被人看到的话，在这次故事结束之前，你和小镇还有被看到的人的【牵绊】减少1个等级。', ability: '旧识新交', abilityCost: 6, abilityDesc: '因为相当的长寿，狐拥有许多古老的知识与缘分。当你遇到别的化形时，你可以将他们设定为你已经认识的朋友。当你遇到人类的时候，你也可以申明你在他小时候就见过他。通过【相遇】获得的【牵绊】可以提高1个等级。（适用于土地神）这个【特技】只能在第一次见到对方时使用。另外，使用的时候，必须要告诉讲述者你是如何和对方认识的。' },
+      { weakness: '装腔作势', weaknessDesc: '狐总是不经意间对别的化形和人类保持一种高傲的态度。如果有人想强化和拥有这个【弱点】的狐的【牵绊】，需要支付额外2点【梦】点数。', ability: '狐之神社', abilityCost: 0, abilityDesc: '获得一个有人类祭祀的【神社】。拥有神社的狐，在故事结束前可以拥有1万日元的【真钱】。另外，就算被人类看到了自己的狐姿态，也不会被追赶或者捉弄（但是会被【吓一跳】）此外，也可以和土地神们进行平等的对话。' },
+      { weakness: '奇行异举', weaknessDesc: '狐的穿着打扮和言行总是和这个时代格格不入，或者总是追求华丽到惹人注目的外表。因为太过于招人显眼，你没有办法隐藏自己，在小镇里走动时就算是人类的姿态，依然会成为众人的关注点。', ability: '飘飘悠悠', abilityCost: 4, abilityDesc: '你可以悠闲地漂浮在半空中。虽然移动时和人类步行的速度差不多，但你可以飞到高高的地方，在找东西的时候也可以增加1点能力值。效果持续到[场景]结束。' },
+      { weakness: '冷眉冷眼', weaknessDesc: '狐不善于表现自己的感情，经常因为冷淡的言行而惹人注目。对方通过【相遇】获得的关于狐的【牵绊】等级-1。', ability: '广结良缘', abilityCost: 4, abilityDesc: '通过训斥对方或者采取冷漠的态度，你可以得到和别的【场景】中的登场人物的缘分。通过减少某个角色和狐之间的【牵绊】的1个等级，你可以增加别的场景中的一个角色和狐之间的【牵绊】的1个等级。这个增加的等级可以是从0到1的。' },
+      { weakness: '逞强好胜', weaknessDesc: '狐总是会说自己能做到超出自己能力范围的事情。每次你想在判定时使用【心意点】点数的时候，你必须额外支付2点。', ability: '狐之领礼', abilityCost: 8, abilityDesc: '你可以将带有特殊力量的道具送给人类。你可以从自身或者同伴的【特技】当中选择一个，然后将其送给人类。如果使用得当，人类也可以使用这【特技】。' },
+    ],
+    '狸': [
+      { weakness: '惴惴不安', weaknessDesc: '狸非常胆小，很容易就会被吓到。如果需要进行【吓一跳】的判定的话，和判定结果无关你都会失去意识。虽然就算失去意识你的变身也不会解除，但是如果不借助伙伴的帮助的话你将什么都做不到。', ability: '庞然大物', abilityCost: 8, abilityDesc: '通过将身体变得很大来让看到的人【吓一跳】。第一次看到狸的这个特技的所有角色（包括化形）都会被【吓一跳】。在这个【吓一跳】判定中，狸的【变化】属性额外提高2点。' },
+      { weakness: '忠厚老实', weaknessDesc: '狸就算自己会去骗别人，也没有想过自己也会被别人欺骗。就算别人在对你说谎，你也不会去怀疑他们。即使你很清楚别的角色在说谎，你所扮演的狸分身也必须要去相信他们所说的话。', ability: '冒冒失失', abilityCost: 6, abilityDesc: '你可以通过展示自己的冒失之处来缓和周围的氛围。只有当狸做了冒失的事情并因此得到【梦】点数的时候才可以使用。所有看到这个冒失场面的角色（讲述者的NPC角色最多3人）获得2点【梦】点数。' },
+      { weakness: '饕餮之徒', weaknessDesc: '狸钟情于各种美食。如果没吃饱的话，就没法好好地行动。另外，如果眼前有食物的话，就算有别的要做的事情，也会先把食物吃完再去考虑。', ability: '饥肠辘辘', abilityCost: 8, abilityDesc: '你可以用肚子饿了的声音来缓和周围的氛围。在没有吃任何东西的[场景]之后的一个场景中，你可以提出自己肚子饿了，然后使用这个【特技】。对于狸拥有【保护】、【爱情】或者【家族】的【牵绊】的角色可以将【牵绊】等级提高1级。但是，最高只能提高到4级。' },
+      { weakness: '得意忘形', weaknessDesc: '狸只要一被夸奖，就会马上得意忘形。遇到困难的判定的时候，就算你知道你会失败（例如是那种不需要你去判定的时候）你也会进行判定。', ability: '狸之舞蹈', abilityCost: 12, abilityDesc: '你可以用奇怪的舞蹈让观众感到高兴。只要看到的人的【涉世】属性不大于4，他们都会停下正在做的事情并捧腹大笑。所有笑出来的人全部都可以得到3点【梦】点数。' },
+      { weakness: '悠然自得', weaknessDesc: '狸做什么都很慢。你的化形的【野性】属性不能高于1，并且当你遇到【野性】的判定的时候，如果你想使用【心意点】来提高【野性】属性，你需要额外花费1点【心意点】。', ability: '小憩片刻', abilityCost: 4, abilityDesc: '你可以通过放松身心来强化变身能力。在没有登场的[场景]结束的时候，你可以获得6点【奇迹点】。' },
+      { weakness: '顽童天性', weaknessDesc: '狸天生喜欢捉弄别人。在小镇上发生的不可思议的事件，都会被当做是狸做的。因此，无法拥有3级以上的和「小镇」的【牵绊】。', ability: '古怪精灵', abilityCost: 0, abilityDesc: '因为喜欢恶作剧，你就算做了恶作剧大家也会依然喜欢着你。当你吓到某个人的时候，你可以得到除了你以外的参加人数（包括讲述者）的【梦】点数，以及大家对你的恶作剧的评价。' },
+    ],
+    '猫': [
+      { weakness: '好动天性', weaknessDesc: '猫的好奇心和狩猎本能非常强烈。当看到比自己小又会动的东西，或者自己没有见过的东西，会不由自主地靠近它或者追赶它。另外，如果它表现出某种意图或者突然做出反应的话，你也会被【吓一跳】。（用【童真】属性进行判定，具体的值由讲述者决定）', ability: '顺手牵羊', abilityCost: 8, abilityDesc: '可以在不被对方发现的情况下偷走对方的所有物。如果是视线内的角色身上的东西的话，不管是什么都可以偷走一个（最多一个）。虽然连身上穿着的衣服都可以偷走，但是不能偷走类似于代步工具之类猫本身没有的东西。' },
+      { weakness: '游手好闲', weaknessDesc: '猫在炎热的天气或者寒冷的天气里总是非常懒散。当你需要为身体活动进行判定、或者使用【特技】的时候，你必须支付一点【心意点】才可以做到。', ability: '酣然入梦', abilityCost: 0, abilityDesc: '就算你什么事情都没做，你依然可以有活跃的表现。在一个[场景]中，如果你登场的时候一直处于睡觉或者犯困的状态的话，你在[场景]结束时可以获得10点【梦】点数。但是，如果你在[场景]中进行过判定，使用过特技，或者积极地发言过的话，这个效果就无法发动。（能否发动由讲述者决定）' },
+      { weakness: '敏感舌头', weaknessDesc: '猫的舌头很敏感，因此没法吃很多东西，例如特别烫的东西，柑橘，乌贼，生的洋葱。如果，一不小心吃下去了这些东西的话，必须自动进行必要值为7的【吓一跳】的判定。', ability: '暗瞒', abilityCost: 4, abilityDesc: '你可以隐藏自己的本性，巧妙地进行角色扮演。这个【特技】在进行判定前由你声明发动。使用了之后，你可以选择你想用于判定的属性值，而不是规则或者讲述人指定的属性值。' },
+      { weakness: '遇水则慨', weaknessDesc: '猫既不会游泳，也很讨厌水。如果进到澡堂或者泳池这种有大量水的地方的话，你必须自动进行必要值为7的【吓一跳】的判定。', ability: '杂技演员', abilityCost: 4, abilityDesc: '你可以完成一些就像是飞起来一样的动作。和运动能力相关的【野性】判定中，不管该动作有多么的不可能，你依然能够成功完成（但是，游泳是做不到的）。' },
+      { weakness: '随心所欲', weaknessDesc: '猫的独立性很强，不怎么会去听别人所说的话。就算你和别人的【牵绊】都到达了5级，也无法获得【强力牵绊】的额外奖励（后面会介绍）。', ability: '暗中观察', abilityCost: 6, abilityDesc: '这意味着你其实一直在暗地里观察着一切的发生与变化。如果使用了这个【特技】的话，你可以看到你没有登场的[场景]以及故事发生之前的事情。但是，猫无法看到自身出生之前所发生的事情。' },
+      { weakness: '张牙舞爪', weaknessDesc: '猫一看到纸质的拉门或者隔扇的时候，就会忍不住伸出爪子去挠它。要是在小镇上看到了这样的东西的话，你就会忘记自己正在做的事情，而专心投入到用爪子去抓挠那个诱人的东西上。', ability: '咄咄逼人', abilityCost: 8, abilityDesc: '通过展示自己神秘的威严来对某人进行威吓，并试图将其吓跑。如果你的【变化】属性高于对方的【涉世】属性的话，就可以立刻让对方从此[场景]中退场。但是，此【特技】无法对友方的化形使用。' },
+    ],
+    '犬': [
+      { weakness: '颈上项圈', weaknessDesc: '狗拥有特定的主人，因此无法违抗他的命令。和【牵绊】的强度无关，你无法做出违逆【主人】的行动。', ability: '有家可归', abilityCost: 0, abilityDesc: '在故事开始时，和【主人】获得等级2的【牵绊】。这个牵绊只能在主人实际登场的[场景]中强化。主人具体是怎样的角色由讲述者可以选择无视你的请求。' },
+      { weakness: '笨手笨脚', weaknessDesc: '狗不善于做一些精细的工作，或者照顾好自己。你的【涉世】属性必须为0点，并且在进行【涉世】属性判定时，如果你想使用【心意点】点数，必须要付出额外的1点。', ability: '咬紧牙关', abilityCost: 4, abilityDesc: '你拥有着无论怎样的情况都可以咬牙忍受下来的坚韧意志。如果你使用此【特技】，你可以在自己被【吓一跳】的时候，无视它的效果（但是你必须声明你正在忍耐着）。另外，需要忍耐【弱点】的时候，也可以使用此【特技】忍耐。' },
+      { weakness: '刚正不阿', weaknessDesc: '狗天性正直，不会说谎。在故事中，你不能说任何的谎话，即使是为了安慰别人而编织的善意的谎言。', ability: '低头认错', abilityCost: 8, abilityDesc: '因为你总是个好孩子，所以大部分时候只要肯低头认错就能得到原谅。如果使用此【特技】，只要不是致命的弱端，几乎所有的争执和失败都可以通过语言和态度来得到原谅。（但是，也请好好地做出相应的态度和表现吧）' },
+      { weakness: '天性害羞', weaknessDesc: '狗面对初次见面的人时，总是感觉不自在，十分害羞。当你通过【相遇】获得和别的角色的【牵绊】时，你对于他的【牵绊】等级-1。但是，这个效果只会对初次见面的角色发动。如果你和对方有【缘分】的话，就会正常地获得【牵绊】等级。', ability: '坚信不疑', abilityCost: 6, abilityDesc: '因为你会毫不动摇自己的想法，一直相信自己和重视的朋友们。只能在[场景]结束时使用。所有你拥有【牵绊】的对象可以获得与他们和你的【牵绊】等级相等的【心意点】。' },
+      { weakness: '纯白无垢', weaknessDesc: '狗不会去怀疑别人，不会去讨厌别人，拥有一颗纯洁无瑕的心灵。在故事中，你无法去怀疑或者讨厌别人（可以适度进行一些类似的行为，但是不会真正打心底地想去那么做）', ability: '喜欢大家', abilityCost: 0, abilityDesc: '你可以真心地说出喜欢这世上的一切。和普通的【牵绊】不同，从故事的最开始你拥有等级为3的名为【对大家的爱】的【牵绊】。这个【牵绊】和普通的【牵绊】不同，只能在最后的【幕间】提升等级。如果讲述者认可的话，大家在游戏开始的时候也可以得到你的【牵绊】。' },
+      { weakness: '凶神恶煞', weaknessDesc: '你是一条体型巨大，叫声骇人的恶犬。当别人通过【相遇】获得和你的【牵绊】时，他对你的【牵绊】等级-1。但是，这个【弱点】不适用于和你有【缘分】的角色。', ability: '盛气凌人', abilityCost: 8, abilityDesc: '为了使对方害怕，你会放声大叫，并一直追赶他。如果你的【野性】属性比对方的【野性】属性高的话，你可以强制让对方从[场景]中退出。但是，此【特技】不能对作为同伴的化形使用。' },
+    ],
+    '兔': [
+      { weakness: '寂寞难耐', weaknessDesc: '兔子很容易感到寂寞，讨厌一个人呆着。因此你无法单独或者和别人分头行动。必须要时常和别人待在一起才行。', ability: '人见人爱', abilityCost: 0, abilityDesc: '你很容易亲近别人，很容易受到别人的喜爱。在【幕间】，当你要强化自己和别人的【牵绊】时，你可以少花费1点【梦】。' },
+      { weakness: '哭哭啼啼', weaknessDesc: '兔子总是马上会哭出来。因为很容易被【吓一跳】，被吓到的时候进行判定时能力值-2。然后，真的被【吓一跳】的时候，你会尽你所能地放声大哭出来。就算你是人类的姿态也是一样。', ability: '苦苦相求', abilityCost: 6, abilityDesc: '你可以眼里含着泪水恳求别人答应你的请求，而且还可以让他们同意。如果对方的【涉世】属性比你的【童真】属性高，他可以拒绝你。但是，如果你的请求是自我毁灭类型的，（例如让别人去死）那么讲述者可以选择无视你的请求。' },
+      { weakness: '爱如潮水', weaknessDesc: '兔子容易陷入各种恋情。故事中，当你和异性（如果讲述者同意，也可以是同性）【相遇】时，和【牵绊】的等级无关，你会获得「恋爱」的【牵绊】。在这之后，除非对方明确说明不希望和你待在一起，或者是为了不和你恋情更深的对象分开的话，你必须和你最初的恋爱对象一起行动。', ability: '最喜欢了', abilityCost: 14, abilityDesc: '通过向自己喜欢的人展示自己的爱意来吸引对方，让对方对于自己的爱意变得更加强烈。可以让对方对于你的【牵绊】等级+1。这个【特技】在一个故事中对同一名角色只能使用一次。' },
+      { weakness: '轻浮好动', weaknessDesc: '兔子不管做什么事情都慌慌张张的，十分性急。因为总是很慌张，你总会做一些多余的事情。每当你想使用【特技】时，你必须额外支付1点【奇迹点】。', ability: '足下生风', abilityCost: 8, abilityDesc: '逃跑的时候，你比谁都快。在即将进行各种判定的时候可以使用，你可以从哪个[场景]离开并移动到一个安全的地方。如果对方不抵抗的话，你也可以带着一个其他角色一起退场。' },
+      { weakness: '感同身受', weaknessDesc: '兔子总是很喜欢去考虑别人的事情。因为经常考虑别人的问题，你总会不自觉地将自己代入别人的角色里。当【场景】中有角色A拥有和你的【牵绊】最强的角色B的【牵绊】时，你对于B的【牵绊】内容会自动变成A对于B的【牵绊】内容。当有很多人和B有【牵绊】时，你可以从他们当中选择一个作为A。', ability: '共同回忆', abilityCost: 6, abilityDesc: '你可以让相遇的人回想起过去共同的回忆。当别人通过【相遇】获得和你的【牵绊】时，你可以让此【牵绊】等级+1。' },
+      { weakness: '爱撒娇鬼', weaknessDesc: '兔子比起自己动手，总喜欢依靠别人。拥有这个【弱点】的PC，只有在除他以外的所有人都判定失败时，才可以进行判定。也就是说，只要同伴里有谁通过了判定，你就不会主动地去参与判定。', ability: '一起玩吧', abilityCost: 8, abilityDesc: '和别人一起游戏度过时间。在没有登场的[场景]中，你可以和那些同样没有登场的角色们玩耍度过。在使用这个【特技】的[场景]结束时，你和一起玩的伙伴们即使没有登场，依然可以用【梦】来强化你们之间的【牵绊】，也能得到【奇迹点】和【心意点】。' },
+    ],
+    '鸟': [
+      { weakness: '鸟眼昏花', weaknessDesc: '鸟在晚上或者昏暗的地方几乎什么也看不清。在夜间，你无法进行任何和【野性】相关的判定。', ability: '千里鹰眼', abilityCost: 10, abilityDesc: '你的目光可以看到很远的地方。使用这个【特技】后，你可以在讲述者认可的范围内找到想找的人物或者东西（但是能不能拿得到是另一回事）' },
+      { weakness: '眼球恐惧', weaknessDesc: '鸟不擅长应付眼球一样的东西。看到巨大的眼球一样的东西（例如颜色相差很大的重叠的圆形物体）时，自动进行一次必要值为7的【吓一跳】判定。当然，你也无法主动接近那样的东西。', ability: '呼朋引伴', abilityCost: 14, abilityDesc: '你可以召集大量的鸟儿来帮助你。使用此【特技】的鸟在[场景]结束前【变化】和【野性】属性变成原来的2倍。但是，因为聚集了大量的鸟，你无法使用【一只小鸟】特技。如果不能好好藏起来的话，遇到你们的人将会被【吓一跳】。' },
+      { weakness: '稀里糊涂', weaknessDesc: '鸟总是很快就会忘记各种事情。你不能进行任何和【知识】相关的【涉世】和【变化】判定。就算你自己还记得，鸟已经忘记了。', ability: '顺其自然', abilityCost: 4, abilityDesc: '你相信着自己的幸运行动着，而且你还能获得成功。当你使用时，你可以获得3点【心意点】。' },
+      { weakness: '纤弱无力', weaknessDesc: '鸟不擅长在地面上运动。不管是动物的姿态还是人类的姿态，只要你没有在用翅膀在空中飞行的时候，就无法进行和运动相关（主要是【野性】的判定）', ability: '安之若素', abilityCost: 6, abilityDesc: '你可以通过拥抱别人，来让因为判定失败而陷入消沉或者因为【吓一跳】而失去意识的人从那种负面状态中恢复过来。' },
+      { weakness: '口无遮拦', weaknessDesc: '鸟总是会把知道的事情立刻告诉别人。在故事结束的时候，所有和你有【牵绊】的角色（除了小镇）都会知道你所知道的事情。', ability: '听我道来', abilityCost: 4, abilityDesc: '你可以将自己想到的事情和看到的事情告诉身处远方的同伴。使用这个【特技】的话，即使你的同伴没有在[场景]中登场，他们依然能够像就像登场了一样获得你得到的信息。另外，你也可以可以用这个【特技】来让别的[场景]中的任务振奋起来。' },
+      { weakness: '避世绝俗', weaknessDesc: '鸟总是带着要远离人世，避开人类的想法。当你想要增强和别人的【牵绊】时，你需要支付1点额外的【梦】点数。', ability: '夕阳西下', abilityCost: 20, abilityDesc: '将当前的时间立即更改为黄昏。这个效果可以无视讲述者之前设置的时间。在[场景]结束之前，时间都会变为黄昏。所有化形使用【特技】时消耗的【奇迹点】变成平时的一半。' },
+    ],
+  };
+
+  const ATTR_LIMITS = {
+    henge: { min: 1, max: 4 },
+    animal: { min: 1, max: 4 },
+    adult: { min: 0, max: 4 },
+    child: { min: 1, max: 4 },
+  };
+
+  // ========== 状态 ==========
+
+  let currentCharacterId = null;
+  let currentTrueForm = '';
+
+  const state = {
+    name: '',
+    trueForm: '',
+    humanAge: null,
+    gender: '',
+    humanAppearance: '',
+    trueAppearance: '',
+    attrHenge: 1,
+    attrAnimal: 1,
+    attrAdult: 0,
+    attrChild: 1,
+    abilities: [],
+    weaknesses: [],
+    extraAbilities: [],
+    dreamPoints: 0,
+    wonderPoints: 0,
+    feelingPoints: 0,
+    memories: 0,
+  };
+
+  // ========== API 工具 ==========
+
+  function getToken() {
+    return localStorage.getItem('token');
+  }
+
+  async function apiFetch(url, options = {}) {
+    const token = getToken();
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    };
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+    const res = await fetch(url, { ...options, headers });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.error || '请求失败 (' + res.status + ')');
+    }
+    return data;
+  }
+
+  // ========== UI 工具 ==========
+
+  function showToast(msg, type) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.className = 'toast show ' + type;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+  }
+
+  // ========== 真身选择 ==========
+
+  function selectTrueForm(form) {
+    currentTrueForm = form;
+    state.trueForm = form;
+    document.querySelectorAll('.true-form-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.form === form);
+    });
+    state.weaknesses = [];
+    state.extraAbilities = [];
+    updateAbilities();
+    updateTransformTable();
+    renderWeaknesses();
+    renderExtraAbilities();
+  }
+
+  document.querySelectorAll('.true-form-btn').forEach(btn => {
+    btn.addEventListener('click', () => selectTrueForm(btn.dataset.form));
+  });
+
+  // ========== 属性控制 ==========
+
+  function getAttrSum() {
+    return state.attrHenge + state.attrAnimal + state.attrAdult + state.attrChild;
+  }
+
+  function updateAttrDisplay() {
+    document.getElementById('val-henge').textContent = state.attrHenge;
+    document.getElementById('val-animal').textContent = state.attrAnimal;
+    document.getElementById('val-adult').textContent = state.attrAdult;
+    document.getElementById('val-child').textContent = state.attrChild;
+
+    const sum = getAttrSum();
+    const sumEl = document.getElementById('attr-sum');
+    document.getElementById('sum-value').textContent = sum;
+    if (sum > 8) {
+      sumEl.classList.add('warning');
+      sumEl.innerHTML = '已分配：<span id="sum-value">' + sum + '</span> / 8 点 ⚠️ 超出上限！';
+    } else {
+      sumEl.classList.remove('warning');
+      sumEl.innerHTML = '已分配：<span id="sum-value">' + sum + '</span> / 8 点';
+    }
+  }
+
+  document.querySelectorAll('.btn-step').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const attr = btn.dataset.attr;
+      const delta = parseInt(btn.dataset.delta, 10);
+      const key = 'attr' + attr.charAt(0).toUpperCase() + attr.slice(1);
+      const limit = ATTR_LIMITS[attr];
+      let val = state[key] + delta;
+      if (val < limit.min) val = limit.min;
+      if (val > limit.max) val = limit.max;
+      state[key] = val;
+      updateAttrDisplay();
+    });
+  });
+
+  // ========== 变身耗用表 ==========
+
+  function updateTransformTable() {
+    const isBird = currentTrueForm === '鸟';
+    document.getElementById('th-partial-1').textContent = isBird ? '小翅膀' : '尾巴露出';
+    document.getElementById('th-partial-2').textContent = isBird ? '可飞行的翅膀' : '耳朵和尾巴都露出';
+
+    // 白天
+    document.getElementById('td-day-p1').textContent = '+2';
+    document.getElementById('td-day-p2').textContent = '±0';
+    // 黄昏
+    document.getElementById('td-dusk-p1').textContent = '±0';
+    document.getElementById('td-dusk-p2').textContent = '±0';
+    // 夜晚
+    document.getElementById('td-night-p1').textContent = '±0';
+    document.getElementById('td-night-p2').textContent = '+2';
+  }
+
+  // ========== 基本能力 ==========
+
+  function updateAbilities() {
+    const list = document.getElementById('ability-list');
+    if (!currentTrueForm) {
+      list.innerHTML = '<p style="color:#888;font-size:14px;">请先选择真身以显示能力。</p>';
+      state.abilities = [];
+      return;
+    }
+    const data = ABILITIES_DATA[currentTrueForm] || [];
+    state.abilities = data.map(a => ({ name: a.name, cost: a.cost }));
+    list.innerHTML = data.map(a =>
+      '<div class="ability-item">' +
+        '<span class="ability-name">' + escapeHtml(a.name) + '</span> - ' +
+        '<span class="ability-cost">消耗 ' + a.cost + ' 奇迹点</span>' +
+      '</div>'
+    ).join('');
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+  }
+
+  // ========== 弱点与追加能力 ==========
+
+  function renderWeaknesses() {
+    const hint = document.getElementById('weakness-hint');
+    const container = document.getElementById('weakness-ability-list');
+    if (!currentTrueForm) {
+      hint.style.display = 'block';
+      container.innerHTML = '';
+      return;
+    }
+    hint.style.display = 'none';
+    const data = WEAKNESS_ABILITY_DATA[currentTrueForm] || [];
+    const selectedNames = state.weaknesses.map(w => typeof w === 'string' ? w : w.name);
+    const canSelectMore = selectedNames.length < 3;
+
+    container.innerHTML = data.map((item, idx) => {
+      const isSelected = selectedNames.includes(item.weakness);
+      const disabledClass = (!isSelected && !canSelectMore) ? ' disabled' : '';
+      return '<div class="weakness-option' + disabledClass + '" data-idx="' + idx + '">' +
+        '<input type="checkbox" ' + (isSelected ? 'checked' : '') +
+        (!isSelected && !canSelectMore ? ' disabled' : '') + '>' +
+        '<div style="flex:1">' +
+          '<div class="weakness-name">' + escapeHtml(item.weakness) + '</div>' +
+          '<div class="weakness-desc">' + escapeHtml(item.weaknessDesc || '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    container.querySelectorAll('.weakness-option').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.tagName === 'INPUT') return;
+        const cb = el.querySelector('input[type="checkbox"]');
+        if (cb.disabled) return;
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change'));
+      });
+    });
+
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        const idx = parseInt(e.target.closest('.weakness-option').dataset.idx, 10);
+        const item = data[idx];
+        if (e.target.checked) {
+          if (state.weaknesses.length >= 3) {
+            e.target.checked = false;
+            showToast('弱点最多选3个', 'error');
+            return;
+          }
+          state.weaknesses.push({ name: item.weakness, description: '' });
+          if (item.ability) {
+            state.extraAbilities.push({
+              name: item.ability,
+              cost: item.abilityCost,
+              description: item.abilityDesc
+            });
+          }
+        } else {
+          state.weaknesses = state.weaknesses.filter(w => (typeof w === 'string' ? w : w.name) !== item.weakness);
+          state.extraAbilities = state.extraAbilities.filter(a => a.name !== item.ability);
+        }
+        renderWeaknesses();
+        renderExtraAbilities();
+      });
+    });
+  }
+
+  function renderExtraAbilities() {
+    const container = document.getElementById('selected-abilities');
+    if (state.extraAbilities.length === 0) {
+      container.innerHTML = '<p style="color:#888;font-size:14px;">选择弱点后将自动显示对应的追加能力。</p>';
+      return;
+    }
+    container.innerHTML = '<h4 style="color:#a0522d;margin-bottom:10px;font-size:15px;">已获得的追加能力</h4>' +
+      state.extraAbilities.map(a =>
+        '<div class="ability-display">' +
+          '<div><span class="ability-display-name">' + escapeHtml(a.name) + '</span>' +
+          (a.cost !== undefined && a.cost !== null ? ' <span class="ability-display-cost">(消耗 ' + a.cost + ' 奇迹点)</span>' : '') +
+          '</div>' +
+          '<div class="ability-display-desc">' + escapeHtml(a.description || '') + '</div>' +
+        '</div>'
+      ).join('');
+  }
+
+  // ========== 基础信息输入同步 ==========
+
+  document.getElementById('char-name').addEventListener('input', e => state.name = e.target.value.trim());
+  document.getElementById('char-age').addEventListener('input', e => state.humanAge = e.target.value === '' ? null : parseInt(e.target.value, 10));
+  document.getElementById('char-gender').addEventListener('change', e => state.gender = e.target.value);
+  document.getElementById('desc-human').addEventListener('input', e => state.humanAppearance = e.target.value);
+  document.getElementById('desc-true').addEventListener('input', e => state.trueAppearance = e.target.value);
+
+  // ========== 操作按钮 ==========
+
+  function gatherPayload() {
+    return {
+      name: state.name,
+      trueForm: state.trueForm,
+      humanAge: state.humanAge,
+      gender: state.gender,
+      humanAppearance: state.humanAppearance,
+      trueAppearance: state.trueAppearance,
+      attrHenge: state.attrHenge,
+      attrAnimal: state.attrAnimal,
+      attrAdult: state.attrAdult,
+      attrChild: state.attrChild,
+      abilities: state.abilities,
+      weaknesses: state.weaknesses.filter(w => {
+        const name = typeof w === 'string' ? w : w.name;
+        return name && name.trim();
+      }).map(w => {
+        const name = typeof w === 'string' ? w : w.name;
+        return { name: name.trim(), description: '' };
+      }),
+      extraAbilities: state.extraAbilities.filter(a => a.name && a.name.trim()),
+      dreamPoints: state.dreamPoints,
+      wonderPoints: state.wonderPoints,
+      feelingPoints: state.feelingPoints,
+      memories: state.memories,
+    };
+  }
+
+  function validate() {
+    if (!state.name.trim()) return '角色名称不能为空';
+    if (!state.trueForm) return '请选择真身';
+    if (getAttrSum() > 8) return '四维属性合计不能超过8点';
+    const validWeaknesses = state.weaknesses.filter(w => {
+      const name = typeof w === 'string' ? w : w.name;
+      return name && name.trim();
+    });
+    if (validWeaknesses.length === 0) {
+      return '请至少选择1个弱点';
+    }
+    if (validWeaknesses.length > 3) {
+      return '弱点最多3个';
+    }
+    return null;
+  }
+
+  document.getElementById('btn-save').addEventListener('click', async () => {
+    const err = validate();
+    if (err) {
+      showToast(err, 'error');
+      return;
+    }
+    try {
+      const payload = gatherPayload();
+      let result;
+      if (currentCharacterId) {
+        result = await apiFetch('/api/characters/' + currentCharacterId, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        showToast('角色卡已更新', 'success');
+      } else {
+        result = await apiFetch('/api/characters', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        currentCharacterId = result.id;
+        showToast('角色卡已创建', 'success');
+      }
+      // 同步只读字段
+      state.dreamPoints = result.dream_points ?? result.dreamPoints ?? 0;
+      state.wonderPoints = result.wonder_points ?? result.wonderPoints ?? 0;
+      state.feelingPoints = result.feeling_points ?? result.feelingPoints ?? 0;
+      state.memories = result.memories ?? 0;
+      updatePointsDisplay();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  });
+
+  document.getElementById('btn-new').addEventListener('click', () => {
+    currentCharacterId = null;
+    state.name = '';
+    state.trueForm = '';
+    state.humanAge = null;
+    state.gender = '';
+    state.humanAppearance = '';
+    state.trueAppearance = '';
+    state.attrHenge = 1;
+    state.attrAnimal = 1;
+    state.attrAdult = 0;
+    state.attrChild = 1;
+    state.abilities = [];
+    state.weaknesses = [];
+    state.extraAbilities = [];
+    state.dreamPoints = 0;
+    state.wonderPoints = 0;
+    state.feelingPoints = 0;
+    state.memories = 0;
+    currentTrueForm = '';
+
+    document.getElementById('char-name').value = '';
+    document.getElementById('char-age').value = '';
+    document.getElementById('char-gender').value = '';
+    document.getElementById('desc-human').value = '';
+    document.getElementById('desc-true').value = '';
+    document.querySelectorAll('.true-form-btn').forEach(btn => btn.classList.remove('active'));
+    updateAttrDisplay();
+    updateAbilities();
+    updateTransformTable();
+    renderWeaknesses();
+    renderExtraAbilities();
+    updatePointsDisplay();
+    showToast('已新建空白角色卡', 'success');
+  });
+
+  // ========== 加载角色卡 ==========
+
+  document.getElementById('btn-load').addEventListener('click', async () => {
+    try {
+      const chars = await apiFetch('/api/characters');
+      const body = document.getElementById('char-list-body');
+      if (!chars || chars.length === 0) {
+        body.innerHTML = '<p style="color:#888;text-align:center;">暂无角色卡</p>';
+      } else {
+        body.innerHTML = chars.map(c =>
+          '<div class="char-list-item" data-id="' + escapeHtml(c.id) + '">' +
+            '<div>' +
+              '<div class="char-list-name">' + escapeHtml(c.name) + '</div>' +
+              '<div class="char-list-meta">' + escapeHtml(c.true_form || c.trueForm || '') + ' · ' + (c.human_age || c.humanAge || '?') + '岁</div>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+        body.querySelectorAll('.char-list-item').forEach(item => {
+          item.addEventListener('click', () => loadCharacter(item.dataset.id));
+        });
+      }
+      document.getElementById('modal-load').classList.add('active');
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  });
+
+  document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('modal-load').classList.remove('active');
+  });
+  document.getElementById('modal-load').addEventListener('click', e => {
+    if (e.target.id === 'modal-load') document.getElementById('modal-load').classList.remove('active');
+  });
+
+  async function loadCharacter(id) {
+    try {
+      const c = await apiFetch('/api/characters/' + id);
+      currentCharacterId = c.id;
+      state.name = c.name || '';
+      state.trueForm = c.true_form || c.trueForm || '';
+      state.humanAge = c.human_age ?? c.humanAge ?? null;
+      state.gender = c.gender || '';
+      state.humanAppearance = c.human_appearance || c.humanAppearance || '';
+      state.trueAppearance = c.true_appearance || c.trueAppearance || '';
+      state.attrHenge = c.attr_henge ?? c.attrHenge ?? 1;
+      state.attrAnimal = c.attr_animal ?? c.attrAnimal ?? 1;
+      state.attrAdult = c.attr_adult ?? c.attrAdult ?? 0;
+      state.attrChild = c.attr_child ?? c.attrChild ?? 1;
+      state.abilities = Array.isArray(c.abilities) ? c.abilities : [];
+      const loadedWeaknesses = Array.isArray(c.weaknesses) ? c.weaknesses : [];
+      const loadedExtraAbilities = Array.isArray(c.extra_abilities) ? c.extra_abilities : (Array.isArray(c.extraAbilities) ? c.extraAbilities : []);
+      state.dreamPoints = c.dream_points ?? c.dreamPoints ?? 0;
+      state.wonderPoints = c.wonder_points ?? c.wonderPoints ?? 0;
+      state.feelingPoints = c.feeling_points ?? c.feelingPoints ?? 0;
+      state.memories = c.memories ?? 0;
+
+      document.getElementById('char-name').value = state.name;
+      document.getElementById('char-age').value = state.humanAge ?? '';
+      document.getElementById('char-gender').value = state.gender;
+      document.getElementById('desc-human').value = state.humanAppearance;
+      document.getElementById('desc-true').value = state.trueAppearance;
+
+      selectTrueForm(state.trueForm);
+      state.weaknesses = loadedWeaknesses;
+      state.extraAbilities = loadedExtraAbilities;
+      updateAttrDisplay();
+      renderWeaknesses();
+      renderExtraAbilities();
+      updatePointsDisplay();
+      document.getElementById('modal-load').classList.remove('active');
+      showToast('角色卡已加载', 'success');
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  }
+
+  function updatePointsDisplay() {
+    document.getElementById('point-dream').textContent = state.dreamPoints;
+    document.getElementById('point-wonder').textContent = state.wonderPoints;
+    document.getElementById('point-feeling').textContent = state.feelingPoints;
+    document.getElementById('point-memories').textContent = state.memories;
+  }
+
+  // ========== 初始化 ==========
+
+  function init() {
+    const token = getToken();
+    if (!token) {
+      document.getElementById('login-tip').style.display = 'block';
+      return;
+    }
+    document.getElementById('editor-container').style.display = 'block';
+    updateAttrDisplay();
+    updateAbilities();
+    updateTransformTable();
+    renderWeaknesses();
+    renderExtraAbilities();
+    updatePointsDisplay();
+  }
+
+  init();
+})();
+</script>
+
+</body>
+</html>
