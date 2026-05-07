@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS room_members (
 CREATE TABLE IF NOT EXISTS bonds (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL,
-  from_character_id TEXT NOT NULL,
+  from_character_id TEXT,
+  from_character_name TEXT,
   to_character_name TEXT NOT NULL,
   to_character_id TEXT,
   bond_type TEXT NOT NULL,
@@ -69,4 +70,15 @@ CREATE TABLE IF NOT EXISTS bonds (
   updated_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (room_id) REFERENCES rooms(id),
   FOREIGN KEY (from_character_id) REFERENCES characters(id)
+);
+
+-- 资源变动日志表
+CREATE TABLE IF NOT EXISTS resource_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  room_code TEXT NOT NULL,
+  character_id TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  change_amount INTEGER NOT NULL,
+  reason TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
 );

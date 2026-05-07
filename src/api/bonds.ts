@@ -13,6 +13,7 @@ function formatBond(row: Record<string, unknown>) {
     id: row.id,
     roomId: row.room_id,
     fromCharacterId: row.from_character_id,
+    fromCharacterName: row.from_character_name,
     toCharacterName: row.to_character_name,
     toCharacterId: row.to_character_id,
     bondType: row.bond_type,
@@ -108,14 +109,15 @@ route.post('/', async (c) => {
   await db
     .prepare(
       `INSERT INTO bonds (
-        id, room_id, from_character_id, to_character_name, to_character_id,
+        id, room_id, from_character_id, from_character_name, to_character_name, to_character_id,
         bond_type, bond_level, is_intense, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
     )
     .bind(
       id,
       body.roomId,
       body.fromCharacterId,
+      null,
       body.toCharacterName,
       body.toCharacterId ?? null,
       body.bondType,
@@ -180,6 +182,154 @@ route.get('/incoming', async (c) => {
   return c.json(results.map(formatBond));
 });
 
+// POST /incoming - 添加他人对我的牵绊（支持NPC）
+route.post('/incoming', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json<{
+    roomId?: string;
+    toCharacterId?: string;
+    fromCharacterId?: string;
+    fromCharacterName?: string;
+    bondType?: string;
+    bondLevel?: number;
+    isIntense?: boolean;
+  }>();
+
+  if (!body.roomId || typeof body.roomId !== 'string') {
+    return c.json({ error: '房间ID不能为空' }, 400);
+  }
+  if (!body.toCharacterId || typeof body.toCharacterId !== 'string') {
+    return c.json({ error: '目标角色ID不能为空' }, 400);
+  }
+  if (!body.bondType || typeof body.bondType !== 'string') {
+    return c.json({ error: '牵绊类型不能为空' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验 toCharacterId 属于当前用户
+  const toCharacter = await db
+    .prepare('SELECT user_id, name FROM characters WHERE id = ?')
+    .bind(body.toCharacterId)
+    .first<{ user_id: string; name: string }>();
+
+  if (!toCharacter) {
+    return c.json({ error: '目标角色不存在' }, 404);
+  }
+  if (toCharacter.user_id !== userId) {
+    return c.json({ error: '无权操作该角色的牵绊' }, 403);
+  }
+
+  // 获取来源角色名
+  let fromName = body.fromCharacterName || '';
+  if (body.fromCharacterId) {
+    const fromChar = await db
+      .prepare('SELECT name FROM characters WHERE id = ?')
+      .bind(body.fromCharacterId)
+      .first<{ name: string }>();
+    if (fromChar) fromName = fromChar.name;
+  }
+  if (!fromName) {
+    return c.json({ error: '来源角色名不能为空' }, 400);
+  }
+
+  const bondLevel = body.bondLevel ?? 1;
+  const isIntense = body.isIntense ? 1 : 0;
+
+  // 检查是否已存在相同 from+room+to 的牵绊
+  const existing = await db
+    .prepare(
+      'SELECT id FROM bonds WHERE room_id = ? AND from_character_id = ? AND to_character_id = ?'
+    )
+    .bind(body.roomId, body.fromCharacterId ?? null, body.toCharacterId)
+    .first<{ id: string }>();
+
+  if (!existing && body.fromCharacterId) {
+    // 也检查 from_character_name 匹配的情况（NPC可能没有ID）
+    const existingByName = await db
+      .prepare(
+        'SELECT id FROM bonds WHERE room_id = ? AND from_character_name = ? AND to_character_id = ?'
+      )
+      .bind(body.roomId, fromName, body.toCharacterId)
+      .first<{ id: string }>();
+
+    if (existingByName) {
+      // 更新
+      await db
+        .prepare(
+          `UPDATE bonds SET
+            from_character_id = ?,
+            bond_type = ?,
+            bond_level = ?,
+            is_intense = ?,
+            updated_at = datetime('now')
+          WHERE id = ?`
+        )
+        .bind(body.fromCharacterId, body.bondType, bondLevel, isIntense, existingByName.id)
+        .run();
+
+      const row = await db
+        .prepare('SELECT * FROM bonds WHERE id = ?')
+        .bind(existingByName.id)
+        .first<Record<string, unknown>>();
+
+      return c.json(formatBond(row!));
+    }
+  }
+
+  if (existing) {
+    // 更新现有牵绊
+    await db
+      .prepare(
+        `UPDATE bonds SET
+          from_character_name = ?,
+          bond_type = ?,
+          bond_level = ?,
+          is_intense = ?,
+          updated_at = datetime('now')
+        WHERE id = ?`
+      )
+      .bind(fromName, body.bondType, bondLevel, isIntense, existing.id)
+      .run();
+
+    const row = await db
+      .prepare('SELECT * FROM bonds WHERE id = ?')
+      .bind(existing.id)
+      .first<Record<string, unknown>>();
+
+    return c.json(formatBond(row!));
+  }
+
+  // 创建新牵绊
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO bonds (
+        id, room_id, from_character_id, from_character_name, to_character_name, to_character_id,
+        bond_type, bond_level, is_intense, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+    )
+    .bind(
+      id,
+      body.roomId,
+      body.fromCharacterId ?? null,
+      fromName,
+      toCharacter.name,
+      body.toCharacterId,
+      body.bondType,
+      bondLevel,
+      isIntense
+    )
+    .run();
+
+  const row = await db
+    .prepare('SELECT * FROM bonds WHERE id = ?')
+    .bind(id)
+    .first<Record<string, unknown>>();
+
+  return c.json(formatBond(row!), 201);
+});
+
 // POST /upgrade - 升级牵绊
 route.post('/upgrade', handleBondUpgrade);
 
@@ -190,20 +340,34 @@ route.delete('/:id', async (c) => {
   const db = c.env.DB;
 
   const bond = await db
-    .prepare('SELECT from_character_id FROM bonds WHERE id = ?')
+    .prepare('SELECT from_character_id, to_character_id FROM bonds WHERE id = ?')
     .bind(id)
-    .first<{ from_character_id: string }>();
+    .first<{ from_character_id: string | null; to_character_id: string | null }>();
 
   if (!bond) {
     return c.json({ error: '牵绊不存在' }, 404);
   }
 
-  const character = await db
-    .prepare('SELECT user_id FROM characters WHERE id = ?')
-    .bind(bond.from_character_id)
-    .first<{ user_id: string }>();
+  // 检查权限：来源角色或目标角色属于当前用户均可删除
+  let authorized = false;
 
-  if (!character || character.user_id !== userId) {
+  if (bond.from_character_id) {
+    const fromChar = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(bond.from_character_id)
+      .first<{ user_id: string }>();
+    if (fromChar && fromChar.user_id === userId) authorized = true;
+  }
+
+  if (!authorized && bond.to_character_id) {
+    const toChar = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(bond.to_character_id)
+      .first<{ user_id: string }>();
+    if (toChar && toChar.user_id === userId) authorized = true;
+  }
+
+  if (!authorized) {
     return c.json({ error: '无权删除此牵绊' }, 403);
   }
 

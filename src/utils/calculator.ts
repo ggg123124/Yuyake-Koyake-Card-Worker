@@ -111,17 +111,44 @@ export async function calculatePoints(
   const wonderPoints = wonderBase + intenseBonus;
   const feelingPoints = feelingBase + intenseBonus;
 
-  // 同时更新角色卡的 wonder_points 和 feeling_points
+  // 获取当前角色卡的 wonder_points 和 feeling_points
+  const currentPoints = await db
+    .prepare('SELECT wonder_points, feeling_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ wonder_points: number; feeling_points: number }>();
+
+  const currentWonder = currentPoints?.wonder_points ?? 0;
+  const currentFeeling = currentPoints?.feeling_points ?? 0;
+  const wonderDelta = wonderPoints - currentWonder;
+  const feelingDelta = feelingPoints - currentFeeling;
+
+  // 累加式更新角色卡的 wonder_points 和 feeling_points
   await db
     .prepare(
       `
       UPDATE characters
-      SET wonder_points = ?, feeling_points = ?, updated_at = datetime('now')
+      SET wonder_points = wonder_points + ?, feeling_points = feeling_points + ?, updated_at = datetime('now')
       WHERE id = ?
       `
     )
-    .bind(wonderPoints, feelingPoints, characterId)
+    .bind(wonderDelta, feelingDelta, characterId)
     .run();
+
+  // 插入资源日志 - 奇迹点
+  if (wonderDelta !== 0) {
+    await db
+      .prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'wonder', wonderDelta, '幕间结算')
+      .run();
+  }
+
+  // 插入资源日志 - 心意点
+  if (feelingDelta !== 0) {
+    await db
+      .prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'feeling', feelingDelta, '幕间结算')
+      .run();
+  }
 
   return {
     wonderPoints,

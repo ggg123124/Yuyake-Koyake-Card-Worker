@@ -94,13 +94,17 @@ route.post('/:code/join', authMiddleware, async (c) => {
     return c.json({ error: '房间不存在' }, 404);
   }
 
-  // 检查是否已在房间中
+  // 检查是否已在房间中（重新加入时视为成功）
   const existingMember = await db
-    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .prepare('SELECT character_id, role FROM room_members WHERE room_id = ? AND character_id = ?')
     .bind(roomId, characterId)
-    .first();
+    .first<{ character_id: string; role: string }>();
   if (existingMember) {
-    return c.json({ error: '该角色已在房间中' }, 409);
+    return c.json({
+      roomId,
+      characterId,
+      role: existingMember.role,
+    });
   }
 
   // 确定角色：如果创建者加入，role = 'gm'，否则 'player'
@@ -152,7 +156,7 @@ route.get('/:code', authMiddleware, async (c) => {
       `
       SELECT rm.character_id, rm.user_id, rm.role, rm.joined_at,
              c.id as char_id, c.name, c.true_form, c.attr_henge, c.attr_animal, c.attr_adult, c.attr_child,
-             c.dream_points, c.weaknesses, c.abilities, c.extra_abilities
+             c.dream_points, c.wonder_points, c.feeling_points, c.weaknesses, c.abilities, c.extra_abilities
       FROM room_members rm
       JOIN characters c ON rm.character_id = c.id
       WHERE rm.room_id = ?
@@ -172,6 +176,8 @@ route.get('/:code', authMiddleware, async (c) => {
       attr_adult: number;
       attr_child: number;
       dream_points: number;
+      wonder_points: number;
+      feeling_points: number;
       weaknesses: string | null;
       abilities: string | null;
       extra_abilities: string | null;
@@ -197,6 +203,8 @@ route.get('/:code', authMiddleware, async (c) => {
         attrAdult: m.attr_adult,
         attrChild: m.attr_child,
         dreamPoints: m.dream_points,
+        wonderPoints: m.wonder_points,
+        feelingPoints: m.feeling_points,
         weaknesses: m.weaknesses,
         abilities: m.abilities,
         extraAbilities: m.extra_abilities,
@@ -332,6 +340,14 @@ route.post('/:code/give-dream', authMiddleware, async (c) => {
     .bind(amount, characterId)
     .run();
 
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db.prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'dream', amount, 'GM赠送').run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
   // 获取更新后的梦点数
   const updated = await db
     .prepare('SELECT dream_points FROM characters WHERE id = ?')
@@ -404,9 +420,9 @@ route.post('/:code/give-dream-player', authMiddleware, async (c) => {
 
   // 校验发起方角色属于当前用户
   const fromCharacter = await db
-    .prepare('SELECT user_id FROM characters WHERE id = ?')
+    .prepare('SELECT user_id, name FROM characters WHERE id = ?')
     .bind(fromCharacterId)
-    .first<{ user_id: string }>();
+    .first<{ user_id: string; name: string }>();
   if (!fromCharacter) {
     return c.json({ error: '发起方角色卡不存在' }, 404);
   }
@@ -439,6 +455,14 @@ route.post('/:code/give-dream-player', authMiddleware, async (c) => {
     .bind(amount, toCharacterId)
     .run();
 
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db.prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, toCharacterId, 'dream', amount, `${fromCharacter.name} 赠送`).run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
   // 获取更新后的梦点数
   const toUpdated = await db
     .prepare('SELECT dream_points FROM characters WHERE id = ?')
@@ -449,6 +473,166 @@ route.post('/:code/give-dream-player', authMiddleware, async (c) => {
     toCharacterId,
     added: amount,
     dreamPoints: toUpdated?.dream_points,
+  });
+});
+
+// POST /:code/deduct-wonder - GM 扣除奇迹点
+route.post('/:code/deduct-wonder', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const body = await c.req.json<{ characterId?: string; amount?: number }>();
+  const { characterId, amount } = body;
+  const userId = c.get('userId');
+
+  if (!characterId || typeof characterId !== 'string') {
+    return c.json({ error: '角色卡ID不能为空' }, 400);
+  }
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return c.json({ error: '扣除数量必须是正整数' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验房间成员身份
+  const isMember = await isRoomMember(db, roomId, userId);
+  if (!isMember) {
+    return c.json({ error: '只有房间成员可以执行此操作' }, 403);
+  }
+
+  // 校验权限：GM可以扣除任何角色，玩家只能扣除自己的角色
+  const isGM = await checkGM(db, roomId, userId);
+  if (!isGM) {
+    const character = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(characterId)
+      .first<{ user_id: string }>();
+    if (!character || character.user_id !== userId) {
+      return c.json({ error: '只能扣除自己角色的奇迹点' }, 403);
+    }
+  }
+
+  // 检查角色是否在房间中
+  const targetMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, characterId)
+    .first();
+  if (!targetMember) {
+    return c.json({ error: '该角色不在此房间中' }, 404);
+  }
+
+  // 检查当前奇迹点是否足够
+  const targetChar = await db
+    .prepare('SELECT wonder_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ wonder_points: number }>();
+  if (!targetChar || targetChar.wonder_points < amount) {
+    return c.json({ error: '奇迹点不足，当前: ' + (targetChar?.wonder_points ?? 0) }, 400);
+  }
+
+  // 扣除奇迹点
+  await db
+    .prepare(
+      "UPDATE characters SET wonder_points = wonder_points - ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(amount, characterId)
+    .run();
+
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db.prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'wonder', -amount, '消耗奇迹点').run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
+  // 获取更新后的奇迹点数
+  const updated = await db
+    .prepare('SELECT wonder_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ wonder_points: number }>();
+
+  return c.json({
+    success: true,
+    newPoints: updated?.wonder_points,
+  });
+});
+
+// POST /:code/deduct-feeling - GM 扣除心意点
+route.post('/:code/deduct-feeling', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const body = await c.req.json<{ characterId?: string; amount?: number }>();
+  const { characterId, amount } = body;
+  const userId = c.get('userId');
+
+  if (!characterId || typeof characterId !== 'string') {
+    return c.json({ error: '角色卡ID不能为空' }, 400);
+  }
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return c.json({ error: '扣除数量必须是正整数' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验房间成员身份
+  const isMember = await isRoomMember(db, roomId, userId);
+  if (!isMember) {
+    return c.json({ error: '只有房间成员可以执行此操作' }, 403);
+  }
+
+  // 校验权限：GM可以扣除任何角色，玩家只能扣除自己的角色
+  const isGM = await checkGM(db, roomId, userId);
+  if (!isGM) {
+    const character = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(characterId)
+      .first<{ user_id: string }>();
+    if (!character || character.user_id !== userId) {
+      return c.json({ error: '只能扣除自己角色的心意点' }, 403);
+    }
+  }
+
+  // 检查角色是否在房间中
+  const targetMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, characterId)
+    .first();
+  if (!targetMember) {
+    return c.json({ error: '该角色不在此房间中' }, 404);
+  }
+
+  // 检查当前心意点是否足够
+  const targetChar = await db
+    .prepare('SELECT feeling_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ feeling_points: number }>();
+  if (!targetChar || targetChar.feeling_points < amount) {
+    return c.json({ error: '心意点不足，当前: ' + (targetChar?.feeling_points ?? 0) }, 400);
+  }
+
+  // 扣除心意点
+  await db
+    .prepare(
+      "UPDATE characters SET feeling_points = feeling_points - ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(amount, characterId)
+    .run();
+
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db.prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'feeling', -amount, '消耗心意点').run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
+  // 获取更新后的心意点数
+  const updated = await db
+    .prepare('SELECT feeling_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ feeling_points: number }>();
+
+  return c.json({
+    success: true,
+    newPoints: updated?.feeling_points,
   });
 });
 
@@ -497,6 +681,170 @@ route.put('/:code/role', authMiddleware, async (c) => {
     roomId,
     characterId,
     role,
+  });
+});
+
+// GET /:code/resource-logs - 获取房间资源日志
+route.get('/:code/resource-logs', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const userId = c.get('userId');
+  const db = c.env.DB;
+
+  // 校验房间存在
+  const room = await db
+    .prepare('SELECT id, gm_user_id FROM rooms WHERE id = ?')
+    .bind(roomId)
+    .first<{ id: string; gm_user_id: string }>();
+  if (!room) {
+    return c.json({ error: '房间不存在' }, 404);
+  }
+
+  // 校验当前用户是否是房间成员或 GM
+  const member = await isRoomMember(db, roomId, userId);
+  const isGm = room.gm_user_id === userId;
+  if (!member && !isGm) {
+    return c.json({ error: '只有房间成员可以查看资源日志' }, 403);
+  }
+
+  // 查询资源日志，关联角色名称，按时间倒序
+  // 容错：resource_logs 表可能尚未创建，此时返回空数组
+  let logs: {
+    id: number;
+    character_name: string;
+    resource_type: string;
+    change_amount: number;
+    reason: string | null;
+    created_at: string;
+  }[] = [];
+
+  try {
+    const result = await db
+      .prepare(
+        `
+        SELECT rl.id, c.name as character_name, rl.resource_type, rl.change_amount, rl.reason, rl.created_at
+        FROM resource_logs rl
+        JOIN characters c ON rl.character_id = c.id
+        WHERE rl.room_code = ?
+        ORDER BY rl.created_at DESC
+        `
+      )
+      .bind(roomId)
+      .all<{
+        id: number;
+        character_name: string;
+        resource_type: string;
+        change_amount: number;
+        reason: string | null;
+        created_at: string;
+      }>();
+    logs = result.results || [];
+  } catch (e) {
+    // resource_logs 表不存在时，返回空日志
+    console.error('查询 resource_logs 失败:', e);
+  }
+
+  return c.json({
+    logs: logs.map((l) => ({
+      id: l.id,
+      character_name: l.character_name,
+      resource_type: l.resource_type,
+      change_amount: l.change_amount,
+      reason: l.reason,
+      created_at: l.created_at,
+    })),
+  });
+});
+
+// POST /:code/update-resource - 玩家手动修改角色资源
+route.post('/:code/update-resource', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const body = await c.req.json<{ characterId?: string; resourceType?: string; newValue?: number }>();
+  const { characterId, resourceType, newValue } = body;
+  const userId = c.get('userId');
+
+  if (!characterId || typeof characterId !== 'string') {
+    return c.json({ error: '角色卡ID不能为空' }, 400);
+  }
+  if (!resourceType || !['dream', 'feeling', 'wonder'].includes(resourceType)) {
+    return c.json({ error: '资源类型必须是 dream、feeling 或 wonder' }, 400);
+  }
+  if (typeof newValue !== 'number' || !Number.isInteger(newValue) || newValue < 0) {
+    return c.json({ error: '新值必须是非负整数' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验房间存在
+  const room = await db
+    .prepare('SELECT id, gm_user_id FROM rooms WHERE id = ?')
+    .bind(roomId)
+    .first<{ id: string; gm_user_id: string }>();
+  if (!room) {
+    return c.json({ error: '房间不存在' }, 404);
+  }
+
+  // 检查角色是否在房间中
+  const targetMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, characterId)
+    .first();
+  if (!targetMember) {
+    return c.json({ error: '该角色不在此房间中' }, 404);
+  }
+
+  // 校验权限：角色属于当前用户，或当前用户是GM
+  const isGM = await checkGM(db, roomId, userId);
+  if (!isGM) {
+    const character = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(characterId)
+      .first<{ user_id: string }>();
+    if (!character || character.user_id !== userId) {
+      return c.json({ error: '只能修改自己角色的资源' }, 403);
+    }
+  }
+
+  // 获取当前资源值
+  const columnMap: Record<string, string> = {
+    dream: 'dream_points',
+    feeling: 'feeling_points',
+    wonder: 'wonder_points',
+  };
+  const column = columnMap[resourceType];
+
+  const current = await db
+    .prepare(`SELECT ${column} as current_value FROM characters WHERE id = ?`)
+    .bind(characterId)
+    .first<{ current_value: number }>();
+
+  if (!current) {
+    return c.json({ error: '角色卡不存在' }, 404);
+  }
+
+  const changeAmount = newValue - current.current_value;
+
+  // 更新资源值
+  await db
+    .prepare(`UPDATE characters SET ${column} = ?, updated_at = datetime('now') WHERE id = ?`)
+    .bind(newValue, characterId)
+    .run();
+
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db
+      .prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, resourceType, changeAmount, '手动修改')
+      .run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
+  return c.json({
+    characterId,
+    resourceType,
+    previousValue: current.current_value,
+    newValue,
+    changeAmount,
   });
 });
 

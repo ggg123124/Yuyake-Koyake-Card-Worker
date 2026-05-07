@@ -1,4 +1,4 @@
-name = "xiyao-wanyao"
+name = "yuyake-koyake-card-worker"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -9,7 +9,7 @@ JWT_SECRET = "xiyao-wanyao-dev-secret-change-in-production"
 [[d1_databases]]
 binding = "DB"
 database_name = "xiyao-wanyao-db"
-database_id = "local"
+database_id = "a26e6f25-0a5d-4a5e-8796-12605b94d39a"
 
 [assets]
 directory = "./src/public"
