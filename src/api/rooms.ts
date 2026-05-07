@@ -151,7 +151,8 @@ route.get('/:code', authMiddleware, async (c) => {
     .prepare(
       `
       SELECT rm.character_id, rm.user_id, rm.role, rm.joined_at,
-             c.id as char_id, c.name, c.true_form, c.attr_henge, c.attr_animal, c.attr_adult, c.attr_child
+             c.id as char_id, c.name, c.true_form, c.attr_henge, c.attr_animal, c.attr_adult, c.attr_child,
+             c.dream_points, c.weaknesses, c.abilities, c.extra_abilities
       FROM room_members rm
       JOIN characters c ON rm.character_id = c.id
       WHERE rm.room_id = ?
@@ -170,6 +171,10 @@ route.get('/:code', authMiddleware, async (c) => {
       attr_animal: number;
       attr_adult: number;
       attr_child: number;
+      dream_points: number;
+      weaknesses: string | null;
+      abilities: string | null;
+      extra_abilities: string | null;
     }>();
 
   return c.json({
@@ -191,6 +196,10 @@ route.get('/:code', authMiddleware, async (c) => {
         attrAnimal: m.attr_animal,
         attrAdult: m.attr_adult,
         attrChild: m.attr_child,
+        dreamPoints: m.dream_points,
+        weaknesses: m.weaknesses,
+        abilities: m.abilities,
+        extraAbilities: m.extra_abilities,
       },
     })),
   });
@@ -365,6 +374,81 @@ route.post('/:code/set-phase', authMiddleware, async (c) => {
   return c.json({
     roomId,
     phase,
+  });
+});
+
+// POST /:code/give-dream-player - 玩家赠送梦点（发起方不扣除，目标方直接增加）
+route.post('/:code/give-dream-player', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const body = await c.req.json<{ fromCharacterId?: string; toCharacterId?: string; amount?: number }>();
+  const { fromCharacterId, toCharacterId, amount } = body;
+  const userId = c.get('userId');
+
+  if (!fromCharacterId || typeof fromCharacterId !== 'string') {
+    return c.json({ error: '发起方角色卡ID不能为空' }, 400);
+  }
+  if (!toCharacterId || typeof toCharacterId !== 'string') {
+    return c.json({ error: '目标角色卡ID不能为空' }, 400);
+  }
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return c.json({ error: '梦点数必须是正整数' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验房间成员身份
+  const isMember = await isRoomMember(db, roomId, userId);
+  if (!isMember) {
+    return c.json({ error: '只有房间成员可以执行此操作' }, 403);
+  }
+
+  // 校验发起方角色属于当前用户
+  const fromCharacter = await db
+    .prepare('SELECT user_id FROM characters WHERE id = ?')
+    .bind(fromCharacterId)
+    .first<{ user_id: string }>();
+  if (!fromCharacter) {
+    return c.json({ error: '发起方角色卡不存在' }, 404);
+  }
+  if (fromCharacter.user_id !== userId) {
+    return c.json({ error: '无权操作该角色卡' }, 403);
+  }
+
+  // 验证发起方和目标角色都在该房间中
+  const fromMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, fromCharacterId)
+    .first();
+  if (!fromMember) {
+    return c.json({ error: '发起方角色不在此房间中' }, 404);
+  }
+
+  const toMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, toCharacterId)
+    .first();
+  if (!toMember) {
+    return c.json({ error: '目标角色不在此房间中' }, 404);
+  }
+
+  // 更新目标方梦点数（发起方不扣除）
+  await db
+    .prepare(
+      "UPDATE characters SET dream_points = dream_points + ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(amount, toCharacterId)
+    .run();
+
+  // 获取更新后的梦点数
+  const toUpdated = await db
+    .prepare('SELECT dream_points FROM characters WHERE id = ?')
+    .bind(toCharacterId)
+    .first<{ dream_points: number }>();
+
+  return c.json({
+    toCharacterId,
+    added: amount,
+    dreamPoints: toUpdated?.dream_points,
   });
 });
 

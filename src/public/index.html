@@ -8,7 +8,7 @@
 :root{--primary:#E67E22;--primary-light:#F39C12;--primary-dark:#D35400;--bg:#FFF8F0;--card:#fff;--text:#333;--danger:#c0392b;--success:#27ae60;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:16px;line-height:1.5;min-height:100vh}
-.view{display:none;padding:12px;max-width:900px;margin:0 auto}
+.view{display:none;padding:12px;max-width:1400px;margin:0 auto}
 .view.active{display:block}
 .card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;min-width:48px;padding:12px 20px;font-size:18px;border-radius:8px;border:none;cursor:pointer;touch-action:manipulation;transition:background .2s,color .2s,transform .1s;margin:4px}
@@ -32,7 +32,7 @@ input:focus,select:focus{outline:none;border-color:var(--primary)}
 .tag{background:rgba(255,255,255,.2);padding:4px 10px;border-radius:6px;font-size:14px}
 .phase-badge{background:var(--primary-light);padding:6px 14px;border-radius:20px;font-size:16px;font-weight:700}
 .accordion .panel{background:var(--card);border-radius:12px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);overflow:hidden}
-.panel-title{background:var(--primary);color:#fff;padding:16px;font-size:18px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none;min-height:56px}
+.panel-title{background:var(--primary);color:#fff;padding:16px;font-size:20px;font-weight:700;cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none;min-height:56px}
 .panel-title .chevron{transition:transform .2s}
 .panel-title.collapsed .chevron{transform:rotate(-90deg)}
 .panel:has(.panel-content.collapsed) .chevron{transform:rotate(-90deg)}
@@ -76,6 +76,9 @@ th{background:#fafafa}
 #lobby-actions .btn{width:100%}
 a.btn{text-decoration:none}
 .room-info{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.room-col-left,.room-col-right{display:contents}
+@media(min-width:1024px){.accordion{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}.room-col-left{grid-column:1;display:flex;flex-direction:column}.room-col-right{grid-column:2;display:flex;flex-direction:column}}
+@media(max-width:768px){.accordion{display:block}.room-col-left,.room-col-right{display:contents}}
 @media(max-width:600px){.keyboard-grid{grid-template-columns:repeat(5,1fr)}.grid-btns{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -129,34 +132,38 @@ a.btn{text-decoration:none}
     </div>
   </div>
   <div class="accordion">
-    <div class="panel">
-      <div class="panel-title collapsed" onclick="toggleAccordion('members-content')">成员列表 <span class="chevron">▼</span></div>
-      <div id="members-content" class="panel-content collapsed"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-title" onclick="toggleAccordion('outgoing-content')">我对他人的牵绊 <span class="chevron">▼</span></div>
-      <div id="outgoing-content" class="panel-content">
-        <button class="btn btn-primary" onclick="openBondModal()">添加牵绊</button>
-        <div id="outgoing-list" style="margin-top:12px"></div>
+    <div class="room-col-left">
+      <div class="panel">
+        <div class="panel-title collapsed" onclick="toggleAccordion('members-content')">成员列表 <span class="chevron">▼</span></div>
+        <div id="members-content" class="panel-content collapsed"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title" onclick="toggleAccordion('outgoing-content')">我对他人的牵绊 <span class="chevron">▼</span></div>
+        <div id="outgoing-content" class="panel-content">
+          <button class="btn btn-primary" onclick="openBondModal()">添加牵绊</button>
+          <div id="outgoing-list" style="margin-top:12px"></div>
+        </div>
+      </div>
+      <div class="panel" id="panel-incoming">
+        <div class="panel-title collapsed" onclick="toggleAccordion('incoming-content')">他人对我的牵绊 <span class="chevron">▼</span></div>
+        <div id="incoming-content" class="panel-content collapsed"></div>
       </div>
     </div>
-    <div class="panel" id="panel-incoming">
-      <div class="panel-title collapsed" onclick="toggleAccordion('incoming-content')">他人对我的牵绊 <span class="chevron">▼</span></div>
-      <div id="incoming-content" class="panel-content collapsed"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-title collapsed" onclick="toggleAccordion('calc-content')">奇迹点/心意点结算 <span class="chevron">▼</span></div>
-      <div id="calc-content" class="panel-content collapsed">
-        <button class="btn btn-primary btn-lg" style="width:100%" onclick="doCalculate()">结算</button>
-        <div id="calc-result"></div>
+    <div class="room-col-right">
+      <div class="panel">
+        <div class="panel-title collapsed" onclick="toggleAccordion('calc-content')">奇迹点/心意点结算 <span class="chevron">▼</span></div>
+        <div id="calc-content" class="panel-content collapsed">
+          <button class="btn btn-primary btn-lg" style="width:100%" onclick="doCalculate()">结算</button>
+          <div id="calc-result"></div>
+        </div>
       </div>
-    </div>
-    <div class="panel hidden" id="panel-gm">
-      <div class="panel-title collapsed" onclick="toggleAccordion('gm-content')">GM 面板 <span class="chevron">▼</span></div>
-      <div id="gm-content" class="panel-content collapsed">
-        <div class="form-group"><label>发放梦点</label><div id="gm-dream-targets"></div><div style="display:flex;align-items:center;gap:12px;margin-top:12px"><button class="btn btn-sm" onclick="adjustDream(-1)">-</button><b id="dream-amount" style="font-size:22px;min-width:40px;text-align:center">1</b><button class="btn btn-sm" onclick="adjustDream(1)">+</button><button class="btn btn-primary" onclick="doGiveDream()">确认发放</button></div></div>
-        <div class="form-group"><label>场景阶段</label><div class="grid-btns"><button class="btn btn-secondary" onclick="doSetPhase('scene')">场景中</button><button class="btn btn-secondary" onclick="doSetPhase('intermission')">幕间</button><button class="btn btn-secondary" onclick="doSetPhase('ending')">故事结束</button></div></div>
-        <div class="form-group"><label>调整角色</label><div id="gm-role-list"></div></div>
+      <div class="panel hidden" id="panel-gm">
+        <div class="panel-title collapsed" onclick="toggleAccordion('gm-content')">GM 面板 <span class="chevron">▼</span></div>
+        <div id="gm-content" class="panel-content collapsed">
+          <div class="form-group"><label>发放梦点</label><div id="gm-dream-targets"></div><div style="display:flex;align-items:center;gap:12px;margin-top:12px"><button class="btn btn-sm" onclick="adjustDream(-1)">-</button><b id="dream-amount" style="font-size:22px;min-width:40px;text-align:center">1</b><button class="btn btn-sm" onclick="adjustDream(1)">+</button><button class="btn btn-primary" onclick="doGiveDream()">确认发放</button></div></div>
+          <div class="form-group"><label>场景阶段</label><div class="grid-btns"><button class="btn btn-secondary" onclick="doSetPhase('scene')">场景中</button><button class="btn btn-secondary" onclick="doSetPhase('intermission')">幕间</button><button class="btn btn-secondary" onclick="doSetPhase('ending')">故事结束</button></div></div>
+          <div class="form-group"><label>调整角色</label><div id="gm-role-list"></div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -185,6 +192,11 @@ a.btn{text-decoration:none}
     <h3>选择角色卡</h3>
     <div id="charselect-list"></div>
     <div class="modal-actions"><button class="btn" onclick="hideModal('charselect-modal')">取消</button></div>
+  </div>
+  <div id="char-detail-modal" class="modal hidden">
+    <h3 id="char-detail-name"></h3>
+    <div id="char-detail-body"></div>
+    <div class="modal-actions"><button class="btn" onclick="hideModal('char-detail-modal')">关闭</button></div>
   </div>
 </div>
 
@@ -223,7 +235,7 @@ async function enterRoom(code){try{const r=await api('/api/rooms/'+encodeURIComp
 
 function renderRoom(){if(!room)return;document.getElementById('room-title').textContent=room.name||'未命名房间';document.getElementById('room-code').textContent=room.id;document.getElementById('room-phase').textContent=PHASE_MAP[room.phase]||room.phase;document.getElementById('my-char-name').textContent=myChar?.name||'未知';document.getElementById('my-dream').textContent=myChar?.dream_points??0;renderMembers();renderOutgoing();renderGM();}
 
-function renderMembers(){const c=document.getElementById('members-content');if(!members.length){c.innerHTML='<div class="empty">暂无成员</div>';return;}c.innerHTML=members.map(m=>`<div class="member-row"><div><b>${esc(m.character?.name||'未知')}</b> <span style="color:#999">${esc(m.character?.trueForm||'')}</span></div><span class="badge ${m.role==='gm'?'badge-gm':''}">${m.role==='gm'?'GM':'玩家'}</span></div>`).join('');}
+function renderMembers(){const c=document.getElementById('members-content');if(!members.length){c.innerHTML='<div class="empty">暂无成员</div>';return;}c.innerHTML=members.map(m=>`<div class="member-row" onclick="showCharacterDetail('${m.characterId}')" style="cursor:pointer"><div><b>${esc(m.character?.name||'未知')}</b> <span style="color:#999">${esc(m.character?.trueForm||'')}</span></div><span class="badge ${m.role==='gm'?'badge-gm':''}">${m.role==='gm'?'GM':'玩家'}</span></div>`).join('');}
 
 async function renderOutgoing(){if(!room||!myCharId)return;try{const bonds=await api('/api/bonds?room_id='+encodeURIComponent(room.id)+'&character_id='+encodeURIComponent(myCharId));const c=document.getElementById('outgoing-list');if(!bonds.length){c.innerHTML='<div class="empty">暂无牵绊</div>';return;}let h='<table><thead><tr><th>目标</th><th>类型</th><th>等级</th><th>操作</th></tr></thead><tbody>';bonds.forEach(b=>{h+=`<tr><td>${esc(b.toCharacterName)}</td><td>${esc(b.bondType)}</td><td>${stars(b.bondLevel||1,5,true,b.id)}</td><td><button class="btn btn-danger btn-sm" onclick="deleteBond('${b.id}')">删除</button></td></tr>`;});h+='</tbody></table>';c.innerHTML=h;}catch(e){/* ignore poll errors */}}
 
@@ -243,7 +255,7 @@ function calcCost(cur,tgt,toWeak,fromWeak){
 async function confirmUpgrade(){try{const r=await api('/api/bonds/upgrade',{method:'POST',body:JSON.stringify({bondId:upgradeBondId,targetLevel:upgradeTarget})});myChar.dream_points=r.remainingDreamPoints;document.getElementById('my-dream').textContent=r.remainingDreamPoints;hideModal('upgrade-modal');toast('升级成功！消耗 '+r.cost+' 梦点');renderOutgoing();renderIncoming();}catch(e){toast(e.message,'error');}}
 async function deleteBond(id){if(!confirm('确定删除此牵绊？'))return;try{await api('/api/bonds/'+id,{method:'DELETE'});toast('已删除');renderOutgoing();renderIncoming();}catch(e){toast(e.message,'error');}}
 
-function openBondModal(){const tl=document.getElementById('bond-target-list');tl.innerHTML='';members.filter(m=>m.characterId!==myCharId).forEach(m=>{const b=document.createElement('button');b.className='btn btn-secondary';b.textContent=m.character?.name||'未知';b.onclick=()=>{document.querySelectorAll('#bond-target-list .btn').forEach(x=>x.style.border='');b.style.border='4px solid var(--primary-dark)';tl.dataset.name=m.character?.name;tl.dataset.id=m.characterId;document.getElementById('bond-target-input').classList.add('hidden');};tl.appendChild(b);});const tg=document.getElementById('bond-type-grid');tg.innerHTML='';BOND_TYPES.forEach(t=>{const b=document.createElement('button');b.className='btn';b.textContent=t.n;b.style.background=t.c;b.style.color='#fff';b.onclick=()=>{document.querySelectorAll('#bond-type-grid .btn').forEach(x=>x.style.border='');b.style.border='4px solid var(--primary-dark)';tg.dataset.type=t.n;document.getElementById('bond-type-input').classList.add('hidden');};tg.appendChild(b);});renderBondStars(1);document.getElementById('bond-target-input').value='';document.getElementById('bond-target-input').classList.add('hidden');document.getElementById('bond-type-input').value='';document.getElementById('bond-type-input').classList.add('hidden');delete tl.dataset.name;delete tl.dataset.id;delete tg.dataset.type;showModal('bond-modal');}
+function openBondModal(){const tl=document.getElementById('bond-target-list');tl.innerHTML='';members.filter(m=>m.characterId!==myCharId).forEach(m=>{const b=document.createElement('button');b.className='btn btn-secondary';b.textContent=m.character?.name||'未知';b.onclick=()=>{document.querySelectorAll('#bond-target-list .btn').forEach(x=>x.style.border='');b.style.border='4px solid var(--primary-dark)';tl.dataset.name=m.character?.name;tl.dataset.id=m.characterId;document.getElementById('bond-target-input').classList.add('hidden');};tl.appendChild(b);});const tg=document.getElementById('bond-type-grid');tg.innerHTML='';BOND_TYPES.forEach(t=>{const b=document.createElement('button');b.className='btn';b.textContent=t.n;b.style.background=t.c;b.style.color='#fff';b.onclick=()=>{document.querySelectorAll('#bond-type-grid .btn').forEach(x=>x.style.border='');b.style.border='4px solid var(--primary-dark)';tg.dataset.type=t.n;document.getElementById('bond-type-input').classList.add('hidden');};tg.appendChild(b);});const cb=document.createElement('button');cb.className='btn';cb.textContent='自定义';cb.style.background='#888';cb.style.color='#fff';cb.onclick=()=>{openKeyboard('输入牵绊类型',(val)=>{if(!val)return;document.querySelectorAll('#bond-type-grid .btn').forEach(x=>x.style.border='');cb.style.border='4px solid var(--primary-dark)';tg.dataset.type=val;document.getElementById('bond-type-input').classList.add('hidden');});};tg.appendChild(cb);renderBondStars(1);document.getElementById('bond-target-input').value='';document.getElementById('bond-target-input').classList.add('hidden');document.getElementById('bond-type-input').value='';document.getElementById('bond-type-input').classList.add('hidden');delete tl.dataset.name;delete tl.dataset.id;delete tg.dataset.type;showModal('bond-modal');}
 function toggleManualTarget(){document.getElementById('bond-target-input').classList.toggle('hidden');document.getElementById('bond-target-list').querySelectorAll('.btn').forEach(x=>x.style.border='');delete document.getElementById('bond-target-list').dataset.name;delete document.getElementById('bond-target-list').dataset.id;}
 function renderBondStars(sel){const c=document.getElementById('bond-level-stars');c.innerHTML='';for(let i=1;i<=5;i++){const s=document.createElement('span');s.className='star-btn '+(i<=sel?'active':'');s.textContent=i<=sel?'★':'☆';s.onclick=()=>renderBondStars(i);c.appendChild(s);}c.dataset.level=sel;}
 async function saveBond(){const tl=document.getElementById('bond-target-list');const tg=document.getElementById('bond-type-grid');const name=document.getElementById('bond-target-input').classList.contains('hidden')?(tl.dataset.name||''):document.getElementById('bond-target-input').value.trim();const type=document.getElementById('bond-type-input').classList.contains('hidden')?(tg.dataset.type||''):document.getElementById('bond-type-input').value.trim();const level=parseInt(document.getElementById('bond-level-stars').dataset.level||'1');if(!name){toast('请选择目标角色','error');return;}if(!type){toast('请选择牵绊类型','error');return;}try{await api('/api/bonds',{method:'POST',body:JSON.stringify({roomId:room.id,fromCharacterId:myCharId,toCharacterName:name,toCharacterId:tl.dataset.id||null,bondType:type,bondLevel:level})});hideModal('bond-modal');toast('牵绊已保存');renderOutgoing();}catch(e){toast(e.message,'error');}}
@@ -264,6 +276,10 @@ function openKeyboard(title,callback){document.getElementById('keyboard-title').
 function keyBackspace(){if(keyboardTarget)keyboardTarget.value=keyboardTarget.value.slice(0,-1);}
 function keyClear(){if(keyboardTarget)keyboardTarget.value='';}
 function closeKeyboard(ok){const val=keyboardTarget?keyboardTarget.value:'';const cb=keyboardCallback;keyboardTarget=null;keyboardCallback=null;hideModal('keyboard-modal');if(ok&&cb)cb(val);}
+
+function showCharacterDetail(cid){const member=members.find(m=>m.characterId===cid);if(!member||!member.character)return;const ch=member.character;let w=[],a=[],ea=[];try{w=JSON.parse(ch.weaknesses||'[]');}catch(e){}try{a=JSON.parse(ch.abilities||'[]');}catch(e){}try{ea=JSON.parse(ch.extraAbilities||'[]');}catch(e){}const isSelf=cid===myCharId;let html='<div style="margin-bottom:12px"><b>真身:</b> '+(esc(ch.trueForm)||'-')+'</div>';html+='<div style="margin-bottom:12px"><b>四维属性:</b> 变化 '+(ch.attrHenge||0)+' / 野性 '+(ch.attrAnimal||0)+' / 涉世 '+(ch.attrAdult||0)+' / 童真 '+(ch.attrChild||0)+'</div>';html+='<div style="margin-bottom:12px"><b>梦点数:</b> '+(ch.dreamPoints||0)+'</div>';html+='<div style="margin-bottom:8px"><b>弱点:</b></div><ul style="margin-left:16px;margin-bottom:12px">';if(w.length){w.forEach(x=>{const name=typeof x==='string'?x:(x&&x.name)||'';const desc=typeof x==='object'&&x?x.description:'';html+='<li style="margin-bottom:4px"><b>'+esc(name)+'</b>'+(desc?': '+esc(desc):'')+'</li>';});}else{html+='<li>无</li>';}html+='</ul>';html+='<div style="margin-bottom:8px"><b>基本能力:</b></div><ul style="margin-left:16px;margin-bottom:12px">';if(a.length){a.forEach(x=>{const name=typeof x==='string'?x:(x&&x.name)||'';const desc=typeof x==='object'&&x?x.description:'';html+='<li style="margin-bottom:4px"><b>'+esc(name)+'</b>'+(desc?': '+esc(desc):'')+'</li>';});}else{html+='<li>无</li>';}html+='</ul>';html+='<div style="margin-bottom:8px"><b>追加能力:</b></div><ul style="margin-left:16px;margin-bottom:12px">';if(ea.length){ea.forEach(x=>{const name=typeof x==='string'?x:(x&&x.name)||'';const desc=typeof x==='object'&&x?x.description:'';html+='<li style="margin-bottom:4px"><b>'+esc(name)+'</b>'+(desc?': '+esc(desc):'')+'</li>';});}else{html+='<li>无</li>';}html+='</ul>';if(!isSelf){html+='<div id="give-dream-section" style="display:none;margin-top:16px;padding:12px;background:#fafafa;border-radius:8px">';html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><span>赠送数量:</span><button class="btn btn-sm" onclick="adjustGiveDream(-1)">-</button><b id="give-dream-amount" style="font-size:22px;min-width:40px;text-align:center">1</b><button class="btn btn-sm" onclick="adjustGiveDream(1)">+</button></div>';html+='<div class="modal-actions" style="margin-top:0;justify-content:flex-start"><button class="btn btn-primary" onclick="doGiveDreamPlayer(\''+cid+'\')">确认</button><button class="btn" onclick="document.getElementById(\'give-dream-section\').style.display=\'none\';document.getElementById(\'give-dream-btn-wrap\').style.display=\'flex\'">取消</button></div>';html+='</div>';html+='<div class="modal-actions" id="give-dream-btn-wrap"><button class="btn btn-primary" onclick="document.getElementById(\'give-dream-section\').style.display=\'block\';this.parentElement.style.display=\'none\'">赠送梦点</button></div>';}document.getElementById('char-detail-name').textContent=ch.name||'未知';document.getElementById('char-detail-body').innerHTML=html;showModal('char-detail-modal');}
+function adjustGiveDream(d){const el=document.getElementById('give-dream-amount');if(!el)return;let v=parseInt(el.textContent)+d;if(v<1)v=1;el.textContent=v;}
+async function doGiveDreamPlayer(toCid){const amtEl=document.getElementById('give-dream-amount');if(!amtEl)return;const amt=parseInt(amtEl.textContent);try{await api('/api/rooms/'+encodeURIComponent(room.id)+'/give-dream-player',{method:'POST',body:JSON.stringify({fromCharacterId:myCharId,toCharacterId:toCid,amount:amt})});const r=await api('/api/rooms/'+encodeURIComponent(room.id));room=r;members=r.members||[];if(myCharId){myChar=await api('/api/characters/'+myCharId);}hideModal('char-detail-modal');toast('已赠送 '+amt+' 梦点');renderRoom();}catch(e){toast(e.message,'error');}}
 
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));}
 
