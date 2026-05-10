@@ -124,8 +124,12 @@ export async function calculatePoints(
 
   const currentWonder = currentPoints?.wonder_points ?? 0;
   const currentFeeling = currentPoints?.feeling_points ?? 0;
-  const wonderDelta = wonderPoints - currentWonder;
-  const feelingDelta = feelingPoints - currentFeeling;
+  // 结算只加不减：如果牵绊算出的总值不高于已有值，则增量为0
+  const wonderDelta = Math.max(0, wonderPoints - currentWonder);
+  const feelingDelta = Math.max(0, feelingPoints - currentFeeling);
+  // 结算后的实际总值
+  const settledWonder = currentWonder + wonderDelta;
+  const settledFeeling = currentFeeling + feelingDelta;
 
   // 累加式更新角色卡的 wonder_points 和 feeling_points
   await db
@@ -139,16 +143,16 @@ export async function calculatePoints(
     .bind(wonderDelta, feelingDelta, characterId)
     .run();
 
-  // 插入资源日志 - 奇迹点
-  if (wonderDelta !== 0) {
+  // 插入资源日志 - 奇迹点（仅在有增量时）
+  if (wonderDelta > 0) {
     await db
       .prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
       .bind(roomId, characterId, 'wonder', wonderDelta, '幕间结算')
       .run();
   }
 
-  // 插入资源日志 - 心意点
-  if (feelingDelta !== 0) {
+  // 插入资源日志 - 心意点（仅在有增量时）
+  if (feelingDelta > 0) {
     await db
       .prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
       .bind(roomId, characterId, 'feeling', feelingDelta, '幕间结算')
@@ -156,8 +160,8 @@ export async function calculatePoints(
   }
 
   return {
-    wonderPoints,
-    feelingPoints,
+    wonderPoints: settledWonder,
+    feelingPoints: settledFeeling,
     wonderDelta,
     feelingDelta,
     details: {
