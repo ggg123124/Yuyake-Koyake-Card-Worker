@@ -140,6 +140,7 @@ a.btn{text-decoration:none}
       <span id="room-code" class="tag"></span>
       <span id="room-phase" class="phase-badge"></span>
       <button class="btn btn-secondary btn-sm" onclick="copyRoomLink()" id="btn-copy-link" title="复制房间链接">复制链接</button>
+      <button class="btn btn-secondary btn-sm" onclick="refreshAllData()" id="btn-refresh" title="刷新所有数据">🔄 刷新</button>
       <button class="btn btn-danger btn-sm hidden" onclick="leaveRoom()" id="btn-gm-leave">离开房间</button>
     </div>
     <div class="room-info" id="my-char-info">
@@ -353,6 +354,8 @@ async function loadResourceLogs(){try{const data=await api('/api/rooms/'+encodeU
 function renderResourceLogs(logs){const RESOURCE_MAP={dream:'梦点',feeling:'心意点',wonder:'奇迹点'};const html=(logs||[]).map(log=>{const sign=log.change_amount>0?'+':'';const color=log.change_amount>0?'#4caf50':'#f44336';return`<div style="padding:8px;border-bottom:1px solid #eee;font-size:14px"><b>${esc(log.character_name)}</b> <span style="color:${color}">${sign}${log.change_amount}</span> ${RESOURCE_MAP[log.resource_type]||log.resource_type} <span style="color:#999;margin-left:8px">${esc(log.reason||'')}</span><span style="color:#aaa;float:right;font-size:12px">${log.created_at||''}</span></div>`;}).join('');document.getElementById('resource-logs-list').innerHTML=html||'<div style="padding:16px;color:#999">暂无记录</div>';}
 
 function copyRoomLink(){if(!room)return;const url=new URL(location.href);url.searchParams.set('room',room.id);navigator.clipboard.writeText(url.toString()).then(()=>{toast('房间链接已复制到剪贴板');}).catch(()=>{const ta=document.createElement('textarea');ta.value=url.toString();document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('房间链接已复制到剪贴板');});}
+
+async function refreshAllData(){if(!room)return;const btn=document.getElementById('btn-refresh');if(btn){btn.disabled=true;btn.textContent='刷新中...';}try{const r=await api('/api/rooms/'+encodeURIComponent(room.id));room=r;members=r.members||[];const me=members.find(m=>m.characterId===myCharId);if(me)isGM=me.role==='gm'||room.gmUserId===user.id;if(myCharId){myChar=await api('/api/characters/'+myCharId);}if(!isGM&&myCharId){try{outgoingBonds=await api('/api/bonds?room_id='+encodeURIComponent(room.id)+'&character_id='+encodeURIComponent(myCharId));}catch(e){outgoingBonds=[];}try{incomingBonds=await api('/api/bonds/incoming?room_id='+encodeURIComponent(room.id)+'&character_id='+encodeURIComponent(myCharId));}catch(e){incomingBonds=[];}}renderRoom();renderOutgoing();renderIncoming();toast('数据已刷新');}catch(e){toast('刷新失败: '+e.message,'error');}finally{if(btn){btn.disabled=false;btn.textContent='🔄 刷新';}}}
 
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
