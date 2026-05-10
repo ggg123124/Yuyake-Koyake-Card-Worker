@@ -124,9 +124,9 @@ export async function calculatePoints(
 
   const currentWonder = currentPoints?.wonder_points ?? 0;
   const currentFeeling = currentPoints?.feeling_points ?? 0;
-  // 结算只加不减：如果牵绊算出的总值不高于已有值，则增量为0
-  const wonderDelta = Math.max(0, wonderPoints - currentWonder);
-  const feelingDelta = Math.max(0, feelingPoints - currentFeeling);
+  // 每次结算，牵绊算出的值即为本次增量，直接累加到现有值上
+  const wonderDelta = wonderPoints;
+  const feelingDelta = feelingPoints;
   // 结算后的实际总值
   const settledWonder = currentWonder + wonderDelta;
   const settledFeeling = currentFeeling + feelingDelta;
