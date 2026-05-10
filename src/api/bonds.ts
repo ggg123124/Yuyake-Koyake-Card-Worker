@@ -385,6 +385,7 @@ route.put('/reorder', async (c) => {
     }
 
     let authorized = false;
+    // 出站牵绊：from_character_id 属于当前用户
     if (bond.from_character_id) {
       const fromChar = await db
         .prepare('SELECT user_id FROM characters WHERE id = ?')
@@ -392,7 +393,8 @@ route.put('/reorder', async (c) => {
         .first<{ user_id: string }>();
       if (fromChar && fromChar.user_id === userId) authorized = true;
     }
-    if (!authorized && !bond.from_character_id && bond.to_character_id) {
+    // 入站牵绊：to_character_id 属于当前用户（无论 from 是否为空）
+    if (!authorized && bond.to_character_id) {
       const toChar = await db
         .prepare('SELECT user_id FROM characters WHERE id = ?')
         .bind(bond.to_character_id)
