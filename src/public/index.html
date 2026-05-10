@@ -251,7 +251,7 @@ const KEY_ROWS=[['1','2','3','4','5','6','7','8','9','0'],['Q','W','E','R','T','
 let token=localStorage.getItem('token');
 let user=null,room=null,myCharId=null,myChar=null,members=[],isGM=false,pollTimer=null,lastIncoming='',keyboardTarget=null,keyboardCallback=null,selectedCharId=null,upgradeBondId=null,upgradeTarget=0,outgoingBonds=[],isEditingResource=false;
 
-async function api(url,opts={}){opts.headers={...opts.headers,'Authorization':'Bearer '+(token||''),'Content-Type':'application/json'};const r=await fetch(url,opts);if(r.status===401){token=null;localStorage.removeItem('token');showView('login');throw new Error('登录已过期');}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'请求失败');return j;}
+async function api(url,opts={}){opts.headers={...opts.headers,'Authorization':'Bearer '+(token||''),'Content-Type':'application/json'};const r=await fetch(url,opts);if(r.status===401){const j=await r.json().catch(()=>({}));token=null;localStorage.removeItem('token');showView('login');throw new Error(j.error||'登录已过期');}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'请求失败');return j;}
 function showView(v){document.querySelectorAll('.view').forEach(e=>e.classList.remove('active'));document.getElementById('view-'+v).classList.add('active');}
 function toast(msg,type='success'){const t=document.createElement('div');t.className='toast toast-'+type;t.textContent=msg;document.getElementById('toast-container').appendChild(t);setTimeout(()=>t.remove(),3000);}
 function showModal(id){document.getElementById('modal-overlay').classList.remove('hidden');document.getElementById(id).classList.remove('hidden');}
