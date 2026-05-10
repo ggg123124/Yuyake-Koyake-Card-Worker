@@ -156,6 +156,19 @@ export async function handleBondUpgrade(
     .bind(bond.from_character_id)
     .first<{ dream_points: number }>();
 
+  // 通知 DO 广播
+  try {
+    const doId = c.env.ROOM_DO.idFromName(bond.room_id);
+    const stub = c.env.ROOM_DO.get(doId);
+    await stub.fetch(new Request(`http://internal/rooms/${bond.room_id}/broadcast-bonds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Room-Id': bond.room_id },
+      body: JSON.stringify({}),
+    }));
+  } catch (e) {
+    console.error('通知 RoomDO 广播失败:', e);
+  }
+
   return c.json({
     bondId,
     targetLevel,

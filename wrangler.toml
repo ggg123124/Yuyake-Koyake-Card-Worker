@@ -11,5 +11,14 @@ binding = "DB"
 database_name = "xiyao-wanyao-db"
 database_id = "a26e6f25-0a5d-4a5e-8796-12605b94d39a"
 
+[durable_objects]
+bindings = [
+  { name = "ROOM_DO", class_name = "RoomDurableObject" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDurableObject"]
+
 [assets]
 directory = "./src/public"

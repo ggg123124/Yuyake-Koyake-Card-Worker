@@ -5,7 +5,20 @@ import { handleBondUpgrade } from '../api/calculate';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-route.use('*', authMiddleware);
+// 辅助函数：通知 RoomDO 广播牵绊更新
+async function notifyBondsUpdate(env: Bindings, roomId: string) {
+  try {
+    const doId = env.ROOM_DO.idFromName(roomId);
+    const stub = env.ROOM_DO.get(doId);
+    await stub.fetch(new Request(`http://internal/rooms/${roomId}/broadcast-bonds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Room-Id': roomId },
+      body: JSON.stringify({}),
+    }));
+  } catch (e) {
+    console.error('通知 RoomDO 广播失败:', e);
+  }
+}
 
 // 辅助函数：将 snake_case 行转换为 camelCase 响应
 function formatBond(row: Record<string, unknown>) {
@@ -101,6 +114,9 @@ route.post('/', async (c) => {
       .bind(existing.id)
       .first<Record<string, unknown>>();
 
+    // 通知 DO 广播
+    await notifyBondsUpdate(c.env, body.roomId);
+
     return c.json(formatBond(row!));
   }
 
@@ -130,6 +146,9 @@ route.post('/', async (c) => {
     .prepare('SELECT * FROM bonds WHERE id = ?')
     .bind(id)
     .first<Record<string, unknown>>();
+
+  // 通知 DO 广播
+  await notifyBondsUpdate(c.env, body.roomId);
 
   return c.json(formatBond(row!), 201);
 });
@@ -273,6 +292,9 @@ route.post('/incoming', async (c) => {
         .bind(existingByName.id)
         .first<Record<string, unknown>>();
 
+      // 通知 DO 广播
+      await notifyBondsUpdate(c.env, body.roomId);
+
       return c.json(formatBond(row!));
     }
   }
@@ -296,6 +318,9 @@ route.post('/incoming', async (c) => {
       .prepare('SELECT * FROM bonds WHERE id = ?')
       .bind(existing.id)
       .first<Record<string, unknown>>();
+
+    // 通知 DO 广播
+    await notifyBondsUpdate(c.env, body.roomId);
 
     return c.json(formatBond(row!));
   }
@@ -326,6 +351,9 @@ route.post('/incoming', async (c) => {
     .prepare('SELECT * FROM bonds WHERE id = ?')
     .bind(id)
     .first<Record<string, unknown>>();
+
+  // 通知 DO 广播
+  await notifyBondsUpdate(c.env, body.roomId);
 
   return c.json(formatBond(row!), 201);
 });
@@ -422,6 +450,10 @@ route.put('/:id', async (c) => {
     .bind(id)
     .first<Record<string, unknown>>();
 
+  // 通知 DO 广播
+  const roomId = bond.room_id as string;
+  await notifyBondsUpdate(c.env, roomId);
+
   return c.json(formatBond(row!));
 });
 
@@ -432,9 +464,9 @@ route.delete('/:id', async (c) => {
   const db = c.env.DB;
 
   const bond = await db
-    .prepare('SELECT from_character_id, to_character_id FROM bonds WHERE id = ?')
+    .prepare('SELECT from_character_id, to_character_id, room_id FROM bonds WHERE id = ?')
     .bind(id)
-    .first<{ from_character_id: string | null; to_character_id: string | null }>();
+    .first<{ from_character_id: string | null; to_character_id: string | null; room_id: string }>();
 
   if (!bond) {
     return c.json({ error: '牵绊不存在' }, 404);
@@ -464,6 +496,9 @@ route.delete('/:id', async (c) => {
   }
 
   await db.prepare('DELETE FROM bonds WHERE id = ?').bind(id).run();
+
+  // 通知 DO 广播
+  if (bond.room_id) await notifyBondsUpdate(c.env, bond.room_id);
 
   return c.json({ success: true });
 });

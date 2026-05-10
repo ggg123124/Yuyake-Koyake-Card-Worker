@@ -7,6 +7,7 @@ import roomsRoute from './api/rooms';
 import bondsRoute from './api/bonds';
 import calculateRoute from './api/calculate';
 import { Bindings } from './types';
+import { RoomDurableObject } from './room-do';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -21,4 +22,5 @@ app.route('/api/bonds', bondsRoute);
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
 app.route('/api/calculate', calculateRoute);
 
+export { RoomDurableObject };
 export default app;
