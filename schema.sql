@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS bonds (
   bond_type TEXT NOT NULL,
   bond_level INTEGER DEFAULT 1,
   is_intense INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
   updated_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (room_id) REFERENCES rooms(id),
   FOREIGN KEY (from_character_id) REFERENCES characters(id)

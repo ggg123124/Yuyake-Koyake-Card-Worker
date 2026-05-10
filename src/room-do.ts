@@ -681,12 +681,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     const db = this.env.DB;
 
     const { results: outgoing } = await db
-      .prepare('SELECT * FROM bonds WHERE room_id = ? AND from_character_id = ? ORDER BY updated_at DESC')
+      .prepare('SELECT * FROM bonds WHERE room_id = ? AND from_character_id = ? ORDER BY sort_order ASC, updated_at DESC')
       .bind(this.roomId, characterId)
       .all<Record<string, unknown>>();
 
     const { results: incoming } = await db
-      .prepare('SELECT * FROM bonds WHERE room_id = ? AND to_character_id = ? ORDER BY updated_at DESC')
+      .prepare('SELECT * FROM bonds WHERE room_id = ? AND to_character_id = ? ORDER BY sort_order ASC, updated_at DESC')
       .bind(this.roomId, characterId)
       .all<Record<string, unknown>>();
 
@@ -707,6 +707,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       bondType: row.bond_type,
       bondLevel: row.bond_level,
       isIntense: row.is_intense,
+      sortOrder: row.sort_order ?? 0,
       updatedAt: row.updated_at,
     };
   }

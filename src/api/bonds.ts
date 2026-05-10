@@ -34,6 +34,7 @@ function formatBond(row: Record<string, unknown>) {
     bondType: row.bond_type,
     bondLevel: row.bond_level,
     isIntense: row.is_intense,
+    sortOrder: row.sort_order ?? 0,
     updatedAt: row.updated_at,
   };
 }
@@ -171,7 +172,7 @@ route.get('/', async (c) => {
 
   const { results } = await db
     .prepare(
-      'SELECT * FROM bonds WHERE room_id = ? AND from_character_id = ? ORDER BY updated_at DESC'
+      'SELECT * FROM bonds WHERE room_id = ? AND from_character_id = ? ORDER BY sort_order ASC, updated_at DESC'
     )
     .bind(roomId, characterId)
     .all<Record<string, unknown>>();
@@ -195,7 +196,7 @@ route.get('/incoming', async (c) => {
 
   const { results } = await db
     .prepare(
-      'SELECT * FROM bonds WHERE room_id = ? AND to_character_id = ? ORDER BY updated_at DESC'
+      'SELECT * FROM bonds WHERE room_id = ? AND to_character_id = ? ORDER BY sort_order ASC, updated_at DESC'
     )
     .bind(roomId, characterId)
     .all<Record<string, unknown>>();
@@ -358,6 +359,67 @@ route.post('/incoming', async (c) => {
   await notifyBondsUpdate(c.env, body.roomId);
 
   return c.json(formatBond(row!), 201);
+});
+
+// PUT /reorder - 批量更新牵绊排序
+route.put('/reorder', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json<{ bondIds: string[] }>();
+
+  if (!body.bondIds || !Array.isArray(body.bondIds) || body.bondIds.length === 0) {
+    return c.json({ error: '请提供牵绊ID列表' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验所有牵绊都属于当前用户
+  for (let i = 0; i < body.bondIds.length; i++) {
+    const bondId = body.bondIds[i];
+    const bond = await db
+      .prepare('SELECT from_character_id, to_character_id FROM bonds WHERE id = ?')
+      .bind(bondId)
+      .first<{ from_character_id: string | null; to_character_id: string | null }>();
+
+    if (!bond) {
+      return c.json({ error: `牵绊 ${bondId} 不存在` }, 404);
+    }
+
+    let authorized = false;
+    if (bond.from_character_id) {
+      const fromChar = await db
+        .prepare('SELECT user_id FROM characters WHERE id = ?')
+        .bind(bond.from_character_id)
+        .first<{ user_id: string }>();
+      if (fromChar && fromChar.user_id === userId) authorized = true;
+    }
+    if (!authorized && !bond.from_character_id && bond.to_character_id) {
+      const toChar = await db
+        .prepare('SELECT user_id FROM characters WHERE id = ?')
+        .bind(bond.to_character_id)
+        .first<{ user_id: string }>();
+      if (toChar && toChar.user_id === userId) authorized = true;
+    }
+    if (!authorized) {
+      return c.json({ error: '无权排序此牵绊' }, 403);
+    }
+
+    await db
+      .prepare('UPDATE bonds SET sort_order = ? WHERE id = ?')
+      .bind(i, bondId)
+      .run();
+  }
+
+  // 获取第一个牵绊的 roomId 用于广播
+  const firstBond = await db
+    .prepare('SELECT room_id FROM bonds WHERE id = ?')
+    .bind(body.bondIds[0])
+    .first<{ room_id: string }>();
+
+  if (firstBond) {
+    await notifyBondsUpdate(c.env, firstBond.room_id);
+  }
+
+  return c.json({ success: true });
 });
 
 // POST /upgrade - 升级牵绊
