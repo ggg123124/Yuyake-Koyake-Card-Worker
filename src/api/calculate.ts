@@ -40,6 +40,8 @@ route.post('/:roomId/:characterId', authMiddleware, async (c) => {
     characterId,
     wonderPoints: result.wonderPoints,
     feelingPoints: result.feelingPoints,
+    wonderDelta: result.wonderDelta,
+    feelingDelta: result.feelingDelta,
     details: result.details,
   });
 });

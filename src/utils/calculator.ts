@@ -3,6 +3,8 @@ import { D1Database } from '@cloudflare/workers-types';
 interface PointResult {
   wonderPoints: number;
   feelingPoints: number;
+  wonderDelta: number;
+  feelingDelta: number;
   details: {
     wonderBonds: Array<{
       bondId: string;
@@ -12,7 +14,8 @@ interface PointResult {
     }>;
     feelingBonds: Array<{
       bondId: string;
-      fromCharacterId: string;
+      fromCharacterId: string | null;
+      fromCharacterName: string | null;
       level: number;
     }>;
     intenseBonus: number;
@@ -68,7 +71,7 @@ export async function calculatePoints(
   const feelingResult = await db
     .prepare(
       `
-      SELECT id, from_character_id, bond_level
+      SELECT id, from_character_id, from_character_name, bond_level
       FROM bonds
       WHERE room_id = ? AND to_character_id = ?
       `
@@ -76,13 +79,15 @@ export async function calculatePoints(
     .bind(roomId, characterId)
     .all<{
       id: string;
-      from_character_id: string;
+      from_character_id: string | null;
+      from_character_name: string | null;
       bond_level: number;
     }>();
 
   const feelingBonds = (feelingResult.results || []).map((r) => ({
     bondId: r.id,
     fromCharacterId: r.from_character_id,
+    fromCharacterName: r.from_character_name,
     level: r.bond_level,
   }));
 
@@ -153,6 +158,8 @@ export async function calculatePoints(
   return {
     wonderPoints,
     feelingPoints,
+    wonderDelta,
+    feelingDelta,
     details: {
       wonderBonds,
       feelingBonds,
