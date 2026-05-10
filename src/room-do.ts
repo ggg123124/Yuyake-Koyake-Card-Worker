@@ -190,7 +190,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   // ==================== 业务逻辑 ====================
 
   private async handleGiveDream(db: D1Database, session: Session, msg: WSMessage) {
-    const { characterId, amount } = msg as { characterId?: string; amount?: number };
+    const { characterId, amount, reason } = msg as { characterId?: string; amount?: number; reason?: string };
     if (!characterId || typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
       throw new Error('参数无效');
     }
@@ -213,7 +213,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       .run();
 
     // 资源日志
-    await this.writeResourceLog(db, characterId, 'dream', amount, 'GM赠送');
+    const logReason = reason || 'GM赠送';
+    await this.writeResourceLog(db, characterId, 'dream', amount, logReason);
 
     const updated = await db
       .prepare('SELECT dream_points FROM characters WHERE id = ?')
@@ -234,7 +235,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async handleDeductWonder(db: D1Database, session: Session, msg: WSMessage) {
-    const { characterId, amount } = msg as { characterId?: string; amount?: number };
+    const { characterId, amount, reason } = msg as { characterId?: string; amount?: number; reason?: string };
     if (!characterId || typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
       throw new Error('参数无效');
     }
@@ -268,7 +269,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       .bind(amount, characterId)
       .run();
 
-    await this.writeResourceLog(db, characterId, 'wonder', -amount, '消耗奇迹点');
+    const logReason = reason || '消耗奇迹点';
+    await this.writeResourceLog(db, characterId, 'wonder', -amount, logReason);
 
     const updated = await db
       .prepare('SELECT wonder_points FROM characters WHERE id = ?')
@@ -286,7 +288,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async handleDeductFeeling(db: D1Database, session: Session, msg: WSMessage) {
-    const { characterId, amount } = msg as { characterId?: string; amount?: number };
+    const { characterId, amount, reason } = msg as { characterId?: string; amount?: number; reason?: string };
     if (!characterId || typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
       throw new Error('参数无效');
     }
@@ -316,7 +318,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       .bind(amount, characterId)
       .run();
 
-    await this.writeResourceLog(db, characterId, 'feeling', -amount, '消耗心意点');
+    const logReason = reason || '消耗心意点';
+    await this.writeResourceLog(db, characterId, 'feeling', -amount, logReason);
 
     const updated = await db
       .prepare('SELECT feeling_points FROM characters WHERE id = ?')
@@ -334,7 +337,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async handleAddWonder(db: D1Database, session: Session, msg: WSMessage) {
-    const { characterId, amount } = msg as { characterId?: string; amount?: number };
+    const { characterId, amount, reason } = msg as { characterId?: string; amount?: number; reason?: string };
     if (!characterId || typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
       throw new Error('参数无效');
     }
@@ -356,7 +359,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       .bind(amount, characterId)
       .run();
 
-    await this.writeResourceLog(db, characterId, 'wonder', amount, '增加奇迹点');
+    const logReason = reason || '增加奇迹点';
+    await this.writeResourceLog(db, characterId, 'wonder', amount, logReason);
 
     const updated = await db
       .prepare('SELECT wonder_points FROM characters WHERE id = ?')
@@ -374,7 +378,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async handleAddFeeling(db: D1Database, session: Session, msg: WSMessage) {
-    const { characterId, amount } = msg as { characterId?: string; amount?: number };
+    const { characterId, amount, reason } = msg as { characterId?: string; amount?: number; reason?: string };
     if (!characterId || typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
       throw new Error('参数无效');
     }
@@ -396,7 +400,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       .bind(amount, characterId)
       .run();
 
-    await this.writeResourceLog(db, characterId, 'feeling', amount, '增加心意点');
+    const logReason = reason || '增加心意点';
+    await this.writeResourceLog(db, characterId, 'feeling', amount, logReason);
 
     const updated = await db
       .prepare('SELECT feeling_points FROM characters WHERE id = ?')
