@@ -139,6 +139,7 @@ a.btn{text-decoration:none}
       <b id="room-title"></b>
       <span id="room-code" class="tag"></span>
       <span id="room-phase" class="phase-badge"></span>
+      <button class="btn btn-secondary btn-sm" onclick="copyRoomLink()" id="btn-copy-link" title="复制房间链接">复制链接</button>
     </div>
     <div class="room-info" id="my-char-info">
       <span>我: <b id="my-char-name"></b></span>
@@ -267,7 +268,7 @@ async function doLogin(){const u=document.getElementById('login-user').value.tri
 async function doRegister(){const u=document.getElementById('reg-user').value.trim(),p=document.getElementById('reg-pass').value,n=document.getElementById('reg-name').value.trim();if(!u||!p){toast('请输入用户名和密码','error');return;}try{const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({username:u,password:p,displayName:n||u})});token=r.token;localStorage.setItem('token',token);user=r.user;showLobby();}catch(e){toast(e.message,'error');}}
 function doLogout(){token=null;localStorage.removeItem('token');user=null;showView('login');}
 
-async function showLobby(){try{user=await api('/api/auth/me');}catch(e){token=null;localStorage.removeItem('token');showView('login');return;}document.getElementById('lobby-user').textContent='欢迎，'+user.displayName;showView('lobby');}
+async function showLobby(){try{user=await api('/api/auth/me');}catch(e){token=null;localStorage.removeItem('token');showView('login');return;}document.getElementById('lobby-user').textContent='欢迎，'+user.displayName;showView('lobby');const pendingRoom=localStorage.getItem('pendingRoom');if(pendingRoom){localStorage.removeItem('pendingRoom');await pickCharacterAndJoin(pendingRoom);}}
 
 function showCreateRoom(){openKeyboard('输入房间代码',async(code)=>{if(!code)return;openKeyboard('输入房间名称（可选）',async(name)=>{try{await api('/api/rooms',{method:'POST',body:JSON.stringify({id:code,name:name||''})});toast('房间创建成功');await pickCharacterAndJoin(code);}catch(e){toast(e.message,'error');}});});}
 function showJoinRoom(){openKeyboard('输入房间代码',async(code)=>{if(!code)return;await pickCharacterAndJoin(code);});}
@@ -348,9 +349,11 @@ function quickGiveDream(targetCid){if(!room||!myCharId)return;wsSend({type:'give
 async function loadResourceLogs(){try{const data=await api('/api/rooms/'+encodeURIComponent(room.id)+'/resource-logs');renderResourceLogs(data.logs);}catch(e){}}
 function renderResourceLogs(logs){const RESOURCE_MAP={dream:'梦点',feeling:'心意点',wonder:'奇迹点'};const html=(logs||[]).map(log=>{const sign=log.change_amount>0?'+':'';const color=log.change_amount>0?'#4caf50':'#f44336';return`<div style="padding:8px;border-bottom:1px solid #eee;font-size:14px"><b>${esc(log.character_name)}</b> <span style="color:${color}">${sign}${log.change_amount}</span> ${RESOURCE_MAP[log.resource_type]||log.resource_type} <span style="color:#999;margin-left:8px">${esc(log.reason||'')}</span><span style="color:#aaa;float:right;font-size:12px">${log.created_at||''}</span></div>`;}).join('');document.getElementById('resource-logs-list').innerHTML=html||'<div style="padding:16px;color:#999">暂无记录</div>';}
 
-function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));}
+function copyRoomLink(){if(!room)return;const url=new URL(location.href);url.searchParams.set('room',room.id);navigator.clipboard.writeText(url.toString()).then(()=>{toast('房间链接已复制到剪贴板');}).catch(()=>{const ta=document.createElement('textarea');ta.value=url.toString();document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('房间链接已复制到剪贴板');});}
 
-async function init(){if(token){try{user=await api('/api/auth/me');const savedRoom=localStorage.getItem('currentRoom');const savedCharId=localStorage.getItem('currentCharId');if(savedRoom&&savedCharId){try{await api('/api/rooms/'+encodeURIComponent(savedRoom)+'/join',{method:'POST',body:JSON.stringify({characterId:savedCharId})});selectedCharId=savedCharId;await enterRoom(savedRoom);return;}catch(e){localStorage.removeItem('currentRoom');localStorage.removeItem('currentCharId');}}showLobby();}catch(e){token=null;localStorage.removeItem('token');showView('login');}}else{showView('login');}}
+function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function init(){const urlParams=new URLSearchParams(location.search);const urlRoom=urlParams.get('room');if(urlParams.has('room')){const cleanUrl=new URL(location.href);cleanUrl.searchParams.delete('room');history.replaceState({},'',cleanUrl.toString());}if(token){try{user=await api('/api/auth/me');const savedRoom=localStorage.getItem('currentRoom');const savedCharId=localStorage.getItem('currentCharId');if(savedRoom&&savedCharId){try{await api('/api/rooms/'+encodeURIComponent(savedRoom)+'/join',{method:'POST',body:JSON.stringify({characterId:savedCharId})});selectedCharId=savedCharId;await enterRoom(savedRoom);return;}catch(e){localStorage.removeItem('currentRoom');localStorage.removeItem('currentCharId');}}if(urlRoom){await showLobby();await pickCharacterAndJoin(urlRoom);return;}showLobby();}catch(e){token=null;localStorage.removeItem('token');if(urlRoom){localStorage.setItem('pendingRoom',urlRoom);}showView('login');}}else{if(urlRoom){localStorage.setItem('pendingRoom',urlRoom);}showView('login');}}
 init();
 </script>
 </body>
