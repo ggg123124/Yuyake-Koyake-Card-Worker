@@ -155,7 +155,7 @@ route.get('/:code', authMiddleware, async (c) => {
     .prepare(
       `
       SELECT rm.character_id, rm.user_id, rm.role, rm.joined_at,
-             c.id as char_id, c.name, c.true_form, c.attr_henge, c.attr_animal, c.attr_adult, c.attr_child,
+             c.id as char_id, c.name, c.true_form, c.human_appearance, c.true_appearance, c.attr_henge, c.attr_animal, c.attr_adult, c.attr_child,
              c.dream_points, c.wonder_points, c.feeling_points, c.weaknesses, c.abilities, c.extra_abilities
       FROM room_members rm
       JOIN characters c ON rm.character_id = c.id
@@ -171,6 +171,8 @@ route.get('/:code', authMiddleware, async (c) => {
       char_id: string;
       name: string;
       true_form: string;
+      human_appearance: string | null;
+      true_appearance: string | null;
       attr_henge: number;
       attr_animal: number;
       attr_adult: number;
@@ -198,6 +200,8 @@ route.get('/:code', authMiddleware, async (c) => {
         id: m.char_id,
         name: m.name,
         trueForm: m.true_form,
+        humanAppearance: m.human_appearance,
+        trueAppearance: m.true_appearance,
         attrHenge: m.attr_henge,
         attrAnimal: m.attr_animal,
         attrAdult: m.attr_adult,

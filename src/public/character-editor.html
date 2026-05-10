@@ -659,7 +659,7 @@
 
   <!-- 弱点与追加能力 -->
   <div class="section">
-    <div class="section-title">弱点与追加能力（1~3个）</div>
+    <div class="section-title">弱点与追加能力（0~3个）</div>
     <div class="section-body">
       <p id="weakness-hint" style="color:#888;font-size:14px;margin-bottom:10px;">请先选择真身以显示弱点列表。</p>
       <div id="weakness-ability-list"></div>
@@ -1123,9 +1123,6 @@
       const name = typeof w === 'string' ? w : w.name;
       return name && name.trim();
     });
-    if (validWeaknesses.length === 0) {
-      return '请至少选择1个弱点';
-    }
     if (validWeaknesses.length > 3) {
       return '弱点最多3个';
     }
