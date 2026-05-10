@@ -100,11 +100,21 @@ a.btn{text-decoration:none}
 .topbar-btn:hover{background:rgba(255,255,255,.35)}
 .topbar-btn:active{transform:scale(.96)}
 .topbar-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+#view-loading{display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:16px;padding:0;max-width:none;margin:0}
+#view-loading.active{display:flex}
+.loading-spinner{width:48px;height:48px;border:4px solid #f0d9bc;border-top:4px solid var(--primary);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{color:var(--primary);font-size:20px;font-weight:600}
 </style>
 </head>
 <body>
 
-<div id="view-login" class="view active">
+<div id="view-loading" class="view active">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">加载中...</div>
+</div>
+
+<div id="view-login" class="view">
   <div class="card">
     <h2 style="text-align:center;margin-bottom:20px;color:var(--primary)">夕妖晚谣工具</h2>
     <div class="tabs">
