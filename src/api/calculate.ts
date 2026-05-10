@@ -152,6 +152,14 @@ export async function handleBondUpgrade(
     .bind(targetLevel, bondId)
     .run();
 
+  // 插入资源日志 - 梦点消耗
+  await db
+    .prepare(
+      'INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)'
+    )
+    .bind(bond.room_id, bond.from_character_id, 'dream', -costResult.totalCost, `牵绊升级 → ${bond.to_character_name} Lv.${targetLevel}`)
+    .run();
+
   // 获取更新后的梦点数
   const updatedCharacter = await db
     .prepare('SELECT dream_points FROM characters WHERE id = ?')
