@@ -5,6 +5,8 @@ import { handleBondUpgrade } from '../api/calculate';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+route.use('*', authMiddleware);
+
 // 辅助函数：通知 RoomDO 广播牵绊更新
 async function notifyBondsUpdate(env: Bindings, roomId: string) {
   try {
