@@ -616,30 +616,30 @@
       <table class="data-table" id="transform-table">
         <thead>
           <tr>
-            <th>时段</th>
+            <th></th>
             <th>完全人形</th>
-            <th id="th-partial-1">尾巴露出</th>
-            <th id="th-partial-2">耳朵和尾巴都露出</th>
+            <th id="th-partial-1">耳</th>
+            <th id="th-partial-2">耳尾</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><strong>白天</strong></td>
-            <td>+4</td>
-            <td id="td-day-p1">+2</td>
-            <td id="td-day-p2">±0</td>
+            <th>白昼</th>
+            <td id="td-day-full">8</td>
+            <td id="td-day-p1">6</td>
+            <td id="td-day-p2">4</td>
           </tr>
           <tr>
-            <td><strong>黄昏</strong></td>
-            <td>±0</td>
-            <td id="td-dusk-p1">±0</td>
-            <td id="td-dusk-p2">±0</td>
+            <th>黄昏</th>
+            <td id="td-dusk-full">4</td>
+            <td id="td-dusk-p1">2</td>
+            <td id="td-dusk-p2">0</td>
           </tr>
           <tr>
-            <td><strong>夜晚</strong></td>
-            <td>+2</td>
-            <td id="td-night-p1">±0</td>
-            <td id="td-night-p2">+2</td>
+            <th>夜晚</th>
+            <td id="td-night-full">6</td>
+            <td id="td-night-p1">4</td>
+            <td id="td-night-p2">2</td>
           </tr>
         </tbody>
       </table>
@@ -954,18 +954,21 @@
 
   function updateTransformTable() {
     const isBird = currentTrueForm === '鸟';
-    document.getElementById('th-partial-1').textContent = isBird ? '小翅膀' : '尾巴露出';
-    document.getElementById('th-partial-2').textContent = isBird ? '可飞行的翅膀' : '耳朵和尾巴都露出';
+    document.getElementById('th-partial-1').textContent = isBird ? '小翅膀' : '耳';
+    document.getElementById('th-partial-2').textContent = isBird ? '可飞行的翅膀' : '耳尾';
 
-    // 白天
-    document.getElementById('td-day-p1').textContent = '+2';
-    document.getElementById('td-day-p2').textContent = '±0';
+    // 白昼
+    document.getElementById('td-day-full').textContent = '8';
+    document.getElementById('td-day-p1').textContent = '6';
+    document.getElementById('td-day-p2').textContent = '4';
     // 黄昏
-    document.getElementById('td-dusk-p1').textContent = '±0';
-    document.getElementById('td-dusk-p2').textContent = '±0';
+    document.getElementById('td-dusk-full').textContent = '4';
+    document.getElementById('td-dusk-p1').textContent = '2';
+    document.getElementById('td-dusk-p2').textContent = '0';
     // 夜晚
-    document.getElementById('td-night-p1').textContent = '±0';
-    document.getElementById('td-night-p2').textContent = '+2';
+    document.getElementById('td-night-full').textContent = '6';
+    document.getElementById('td-night-p1').textContent = '4';
+    document.getElementById('td-night-p2').textContent = '2';
   }
 
   // ========== 基本能力 ==========
