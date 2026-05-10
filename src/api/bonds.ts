@@ -333,6 +333,98 @@ route.post('/incoming', async (c) => {
 // POST /upgrade - 升级牵绊
 route.post('/upgrade', handleBondUpgrade);
 
+// PUT /:id - 更新牵绊
+route.put('/:id', async (c) => {
+  const userId = c.get('userId');
+  const id = c.req.param('id');
+  const body = await c.req.json<{
+    bondType?: string;
+    bondLevel?: number;
+    toCharacterName?: string;
+    toCharacterId?: string | null;
+    fromCharacterName?: string;
+  }>();
+
+  const db = c.env.DB;
+
+  const bond = await db
+    .prepare('SELECT * FROM bonds WHERE id = ?')
+    .bind(id)
+    .first<Record<string, unknown>>();
+
+  if (!bond) {
+    return c.json({ error: '牵绊不存在' }, 404);
+  }
+
+  // 检查权限：出站牵绊（from属于当前用户）或入站NPC牵绊（from为null且to属于当前用户）
+  let authorized = false;
+  const fromCharId = bond.from_character_id as string | null;
+  const toCharId = bond.to_character_id as string | null;
+
+  if (fromCharId) {
+    const fromChar = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(fromCharId)
+      .first<{ user_id: string }>();
+    if (fromChar && fromChar.user_id === userId) authorized = true;
+  }
+
+  if (!authorized && !fromCharId && toCharId) {
+    const toChar = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(toCharId)
+      .first<{ user_id: string }>();
+    if (toChar && toChar.user_id === userId) authorized = true;
+  }
+
+  if (!authorized) {
+    return c.json({ error: '无权编辑此牵绊' }, 403);
+  }
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+
+  if (body.bondType !== undefined) {
+    updates.push('bond_type = ?');
+    params.push(body.bondType);
+  }
+  if (body.bondLevel !== undefined) {
+    updates.push('bond_level = ?');
+    params.push(body.bondLevel);
+  }
+  if (body.toCharacterName !== undefined) {
+    updates.push('to_character_name = ?');
+    params.push(body.toCharacterName);
+  }
+  if (body.toCharacterId !== undefined) {
+    updates.push('to_character_id = ?');
+    params.push(body.toCharacterId);
+  }
+  if (body.fromCharacterName !== undefined) {
+    updates.push('from_character_name = ?');
+    params.push(body.fromCharacterName);
+  }
+
+  if (updates.length === 0) {
+    return c.json({ error: '没有需要更新的字段' }, 400);
+  }
+
+  updates.push("updated_at = datetime('now')");
+  params.push(id);
+
+  await db
+    .prepare(`UPDATE bonds SET ${updates.join(', ')} WHERE id = ?`)
+    .bind(...params)
+    .run();
+
+  const row = await db
+    .prepare('SELECT * FROM bonds WHERE id = ?')
+    .bind(id)
+    .first<Record<string, unknown>>();
+
+  return c.json(formatBond(row!));
+});
+
 // DELETE /:id - 删除牵绊
 route.delete('/:id', async (c) => {
   const userId = c.get('userId');
