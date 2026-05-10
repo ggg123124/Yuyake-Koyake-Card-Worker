@@ -640,6 +640,148 @@ route.post('/:code/deduct-feeling', authMiddleware, async (c) => {
   });
 });
 
+// POST /:code/add-wonder - 增加奇迹点
+route.post('/:code/add-wonder', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const body = await c.req.json<{ characterId?: string; amount?: number }>();
+  const { characterId, amount } = body;
+  const userId = c.get('userId');
+
+  if (!characterId || typeof characterId !== 'string') {
+    return c.json({ error: '角色卡ID不能为空' }, 400);
+  }
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return c.json({ error: '增加数量必须是正整数' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验房间成员身份
+  const isMember = await isRoomMember(db, roomId, userId);
+  if (!isMember) {
+    return c.json({ error: '只有房间成员可以执行此操作' }, 403);
+  }
+
+  // 校验权限：GM可以增加任何角色的点数，玩家只能增加自己的角色
+  const isGM = await checkGM(db, roomId, userId);
+  if (!isGM) {
+    const character = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(characterId)
+      .first<{ user_id: string }>();
+    if (!character || character.user_id !== userId) {
+      return c.json({ error: '只能增加自己角色的奇迹点' }, 403);
+    }
+  }
+
+  // 检查角色是否在房间中
+  const targetMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, characterId)
+    .first();
+  if (!targetMember) {
+    return c.json({ error: '该角色不在此房间中' }, 404);
+  }
+
+  // 增加奇迹点
+  await db
+    .prepare(
+      "UPDATE characters SET wonder_points = wonder_points + ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(amount, characterId)
+    .run();
+
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db.prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'wonder', amount, '增加奇迹点').run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
+  // 获取更新后的奇迹点数
+  const updated = await db
+    .prepare('SELECT wonder_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ wonder_points: number }>();
+
+  return c.json({
+    success: true,
+    newPoints: updated?.wonder_points,
+  });
+});
+
+// POST /:code/add-feeling - 增加心意点
+route.post('/:code/add-feeling', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const body = await c.req.json<{ characterId?: string; amount?: number }>();
+  const { characterId, amount } = body;
+  const userId = c.get('userId');
+
+  if (!characterId || typeof characterId !== 'string') {
+    return c.json({ error: '角色卡ID不能为空' }, 400);
+  }
+  if (typeof amount !== 'number' || amount <= 0 || !Number.isInteger(amount)) {
+    return c.json({ error: '增加数量必须是正整数' }, 400);
+  }
+
+  const db = c.env.DB;
+
+  // 校验房间成员身份
+  const isMember = await isRoomMember(db, roomId, userId);
+  if (!isMember) {
+    return c.json({ error: '只有房间成员可以执行此操作' }, 403);
+  }
+
+  // 校验权限：GM可以增加任何角色的点数，玩家只能增加自己的角色
+  const isGM = await checkGM(db, roomId, userId);
+  if (!isGM) {
+    const character = await db
+      .prepare('SELECT user_id FROM characters WHERE id = ?')
+      .bind(characterId)
+      .first<{ user_id: string }>();
+    if (!character || character.user_id !== userId) {
+      return c.json({ error: '只能增加自己角色的心意点' }, 403);
+    }
+  }
+
+  // 检查角色是否在房间中
+  const targetMember = await db
+    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .bind(roomId, characterId)
+    .first();
+  if (!targetMember) {
+    return c.json({ error: '该角色不在此房间中' }, 404);
+  }
+
+  // 增加心意点
+  await db
+    .prepare(
+      "UPDATE characters SET feeling_points = feeling_points + ?, updated_at = datetime('now') WHERE id = ?"
+    )
+    .bind(amount, characterId)
+    .run();
+
+  // 插入资源日志（容错：表不存在时不影响主流程）
+  try {
+    await db.prepare('INSERT INTO resource_logs (room_code, character_id, resource_type, change_amount, reason) VALUES (?, ?, ?, ?, ?)')
+      .bind(roomId, characterId, 'feeling', amount, '增加心意点').run();
+  } catch (e) {
+    console.error('写入 resource_logs 失败:', e);
+  }
+
+  // 获取更新后的心意点数
+  const updated = await db
+    .prepare('SELECT feeling_points FROM characters WHERE id = ?')
+    .bind(characterId)
+    .first<{ feeling_points: number }>();
+
+  return c.json({
+    success: true,
+    newPoints: updated?.feeling_points,
+  });
+});
+
 // PUT /:code/role - GM 调整成员角色
 route.put('/:code/role', authMiddleware, async (c) => {
   const roomId = c.req.param('code');
