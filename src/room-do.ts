@@ -569,11 +569,19 @@ export class RoomDurableObject extends DurableObject<Env> {
   // ==================== 辅助方法 ====================
 
   private async checkGM(db: D1Database, userId: string): Promise<boolean> {
+    // 检查 rooms.gm_user_id（房间创建者）
     const room = await db
       .prepare('SELECT gm_user_id FROM rooms WHERE id = ?')
       .bind(this.roomId)
       .first<{ gm_user_id: string }>();
-    return room !== null && room.gm_user_id === userId;
+    if (room && room.gm_user_id === userId) return true;
+
+    // 检查 room_members 表中是否有 role='gm'
+    const member = await db
+      .prepare('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ? AND role = ?')
+      .bind(this.roomId, userId, 'gm')
+      .first();
+    return !!member;
   }
 
   private async writeResourceLog(db: D1Database, characterId: string, resourceType: string, changeAmount: number, reason: string) {

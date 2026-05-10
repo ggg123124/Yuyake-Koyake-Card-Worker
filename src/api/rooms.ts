@@ -295,11 +295,22 @@ route.post('/:code/leave', authMiddleware, async (c) => {
 
   // 检查是否在房间中
   const member = await db
-    .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+    .prepare('SELECT character_id, role FROM room_members WHERE room_id = ? AND character_id = ?')
     .bind(roomId, characterId)
-    .first();
+    .first<{ character_id: string; role: string }>();
   if (!member) {
     return c.json({ error: '该角色不在此房间中' }, 404);
+  }
+
+  // 如果是 GM，检查是否是最后一个 GM
+  if (member.role === 'gm') {
+    const gmCount = await db
+      .prepare('SELECT COUNT(*) as cnt FROM room_members WHERE room_id = ? AND role = ?')
+      .bind(roomId, 'gm')
+      .first<{ cnt: number }>();
+    if (gmCount && gmCount.cnt <= 1) {
+      return c.json({ error: '房间至少需要保留一个GM，无法离开' }, 400);
+    }
   }
 
   await db

@@ -529,6 +529,7 @@
           <button class="true-form-btn" data-form="犬">犬</button>
           <button class="true-form-btn" data-form="兔">兔</button>
           <button class="true-form-btn" data-form="鸟">鸟</button>
+                    <button class="true-form-btn" data-form="鼠">鼠</button>
         </div>
 
         <label>人形年龄</label>
@@ -775,6 +776,14 @@
       { name: '流言蜚语', cost: 10 },
       { name: '羽翼为枕', cost: 12 },
     ],
+    鼠: [
+      { name: '遁地有方', cost: 4 },
+      { name: '怂恿撺掇', cost: 6 },
+      { name: '吱吱不休', cost: 8 },
+      { name: '偷偷摸摸', cost: 8 },
+      { name: '鼠多势众', cost: 8 },
+      { name: '胡行乱闹', cost: 12 },
+    ],
   };
 
   const WEAKNESS_ABILITY_DATA = {
@@ -825,6 +834,14 @@
       { weakness: '纤弱无力', weaknessDesc: '鸟不擅长在地面上运动。不管是动物的姿态还是人类的姿态，只要你没有在用翅膀在空中飞行的时候，就无法进行和运动相关（主要是【野性】的判定）', ability: '安之若素', abilityCost: 6, abilityDesc: '你可以通过拥抱别人，来让因为判定失败而陷入消沉或者因为【吓一跳】而失去意识的人从那种负面状态中恢复过来。' },
       { weakness: '口无遮拦', weaknessDesc: '鸟总是会把知道的事情立刻告诉别人。在故事结束的时候，所有和你有【牵绊】的角色（除了小镇）都会知道你所知道的事情。', ability: '听我道来', abilityCost: 4, abilityDesc: '你可以将自己想到的事情和看到的事情告诉身处远方的同伴。使用这个【特技】的话，即使你的同伴没有在[场景]中登场，他们依然能够像就像登场了一样获得你得到的信息。另外，你也可以可以用这个【特技】来让别的[场景]中的任务振奋起来。' },
       { weakness: '避世绝俗', weaknessDesc: '鸟总是带着要远离人世，避开人类的想法。当你想要增强和别人的【牵绊】时，你需要支付1点额外的【梦】点数。', ability: '夕阳西下', abilityCost: 20, abilityDesc: '将当前的时间立即更改为黄昏。这个效果可以无视讲述者之前设置的时间。在[场景]结束之前，时间都会变为黄昏。所有化形使用【特技】时消耗的【奇迹点】变成平时的一半。' },
+    ],
+    '鼠': [
+      { weakness: '忙于奔波', weaknessDesc: '鼠总是很慌张，又十分心急。因为你总是处于这种状态，你会做很多无用功。当你要使用【特技】时，你必须额外支付1点【奇迹点】。', ability: '溜之大吉', abilityCost: 8, abilityDesc: '你可以飞快地从各种地方脱身。在即将进行各种判定的时候可以使用，你可以从那个[场景]离开并移动到一个安全的地方。如果对方不抵抗的话，你也可以带着一个其他角色一起退场。' },
+      { weakness: '地底居民', weaknessDesc: '鼠长期住在幽暗的地下洞穴里。因此，他不太了解地面上的事物或者小镇里的情况。对小镇相关的信息，地形相关的知识，以及机械相关的知识的判定会自动失败。', ability: '秘藏之宝', abilityCost: 6, abilityDesc: '你知道那些被忘却的宝藏的位置。拥有这个【特技】的鼠，在故事结束之前拥有价值50万日元的宝物（古币或者古董品之类的）但是，因为这不是现金，所以想要按照它的价值去使用它的话还是需要花费一番功夫的。' },
+      { weakness: '体型娇小', weaknessDesc: '鼠的个头很小，没有什么力气。你的【野性】属性不能超过2，需要进行力气相关的判定时，即使使用【心意点】也无法成功。', ability: '居家良鼠', abilityCost: 0, abilityDesc: '你是那种漂亮的小白鼠，或者可爱的仓鼠。即使以动物的姿态被人类看见，也不会使对方[吓一跳]或者被当做可疑的动物。' },
+      { weakness: '饕餮之徒', weaknessDesc: '鼠是个贪吃鬼。如果没吃饱的话，就没法好好地行动。另外，如果眼前有食物的话，就算有别的要做的事情，也会先把食物吃完再去考虑。', ability: '偷吃行家', abilityCost: 4, abilityDesc: '你可以在别人没有注意到的时候偷走食物。可以偷走视线内放在对方身边的1个食物。虽然大小不限，但是像婚礼蛋糕或者火锅这种鼠拿不了的食物是不行的。' },
+      { weakness: '抱头鼠窜', weaknessDesc: '鼠有着无法对付的动物。和是否是化形无关，当[场景]中出现没有【牵绊】的猫或者蛇的时候，你必须立即从该[场景]中退场。', ability: '目不转睛', abilityCost: 6, abilityDesc: '如果对方是化形或者妖怪的话，你可以看出它的真身，并了解他的【弱点】。但是这个特技对土地神不适用。' },
+      { weakness: '紧咬不放', weaknessDesc: '就算面对比自己更强的对手，鼠不会示弱，还会经常说出自己能做到超过自己能力的事情。在进行判定时，如果想要使用【心意点】，每次需要多支付2点。', ability: '不理你了！', abilityCost: 0, abilityDesc: '就算对对方抱有好意，鼠也没有什么自觉。在[幕间]，你可以支付所需的【梦】来强化别人对你的【牵绊】（但你对他们的【牵绊】等级必须保持不变）就算对方也强化了对你的【牵绊】依然可以使用。在使用了此特技的下一个[幕间]，你可以没有限制地提高你对对方的【牵绊】等级。' },
     ],
   };
 
@@ -1105,7 +1122,13 @@
         return name && name.trim();
       }).map(w => {
         const name = typeof w === 'string' ? w : w.name;
-        return { name: name.trim(), description: '' };
+        let desc = typeof w === 'object' && w ? (w.description || '') : '';
+        if (!desc && state.trueForm) {
+          const data = WEAKNESS_ABILITY_DATA[state.trueForm] || [];
+          const found = data.find(d => d.weakness === name.trim());
+          if (found) desc = found.weaknessDesc || '';
+        }
+        return { name: name.trim(), description: desc };
       }),
       extraAbilities: state.extraAbilities.filter(a => a.name && a.name.trim()),
       dreamPoints: state.dreamPoints,
