@@ -202,18 +202,19 @@ tr.drag-over-bottom{box-shadow:0 3px 0 0 var(--primary) inset}
           <div id="calc-result"></div>
         </div>
       </div>
-      <div class="panel">
-        <div class="panel-title collapsed" onclick="toggleAccordion('resource-logs-content');if(!document.getElementById('resource-logs-content').classList.contains('collapsed'))loadResourceLogs()">资源变更日志 <span class="chevron">▼</span></div>
-        <div id="resource-logs-content" class="panel-content collapsed">
-          <div id="resource-logs-list">加载中...</div>
-        </div>
-      </div>
       <div class="panel" id="panel-player-deduct">
         <div class="panel-title collapsed" onclick="toggleAccordion('player-deduct-content')">点数调整 <span class="chevron">▼</span></div>
         <div id="player-deduct-content" class="panel-content collapsed">
           <div class="form-group"><label>调整模式</label><div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-sm btn-danger" id="player-mode-deduct" onclick="setPlayerDeductMode('deduct')" style="flex:1">消耗</button><button class="btn btn-sm btn-secondary" id="player-mode-add" onclick="setPlayerDeductMode('add')" style="flex:1">增加</button></div></div>
           <div class="form-group"><label id="player-wonder-label">消耗奇迹点</label><div style="display:flex;align-items:center;gap:12px;margin-top:12px"><button class="btn btn-sm" onclick="adjustPlayerDeductWonder(-1)">-</button><b id="player-deduct-wonder-amount" style="font-size:22px;min-width:40px;text-align:center">1</b><button class="btn btn-sm" onclick="adjustPlayerDeductWonder(1)">+</button><button class="btn btn-danger" id="player-wonder-btn" onclick="doPlayerDeductWonder()">确认消耗</button></div></div>
           <div class="form-group"><label id="player-feeling-label">消耗心意点</label><div style="display:flex;align-items:center;gap:12px;margin-top:12px"><button class="btn btn-sm" onclick="adjustPlayerDeductFeeling(-1)">-</button><b id="player-deduct-feeling-amount" style="font-size:22px;min-width:40px;text-align:center">1</b><button class="btn btn-sm" onclick="adjustPlayerDeductFeeling(1)">+</button><button class="btn btn-danger" id="player-feeling-btn" onclick="doPlayerDeductFeeling()">确认消耗</button></div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title collapsed" onclick="toggleAccordion('resource-logs-content');if(!document.getElementById('resource-logs-content').classList.contains('collapsed'))loadResourceLogs()">资源变更日志 <span class="chevron">▼</span></div>
+        <div id="resource-logs-content" class="panel-content collapsed">
+          <div id="resource-logs-filter" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap"><button class="btn btn-sm btn-primary" data-filter="all" onclick="filterResourceLogs('all')">全部</button><button class="btn btn-sm" data-filter="dream" onclick="filterResourceLogs('dream')">梦点</button><button class="btn btn-sm" data-filter="wonder" onclick="filterResourceLogs('wonder')">奇迹点</button><button class="btn btn-sm" data-filter="feeling" onclick="filterResourceLogs('feeling')">心意点</button></div>
+          <div id="resource-logs-list">加载中...</div>
         </div>
       </div>
       <div class="panel hidden" id="panel-gm">
@@ -391,8 +392,10 @@ async function doGiveDreamPlayer(toCid){const amtEl=document.getElementById('giv
 function editResource(el,cid,type,val){isEditingResource=true;const input=document.createElement('input');input.type='number';input.value=val;input.className='res-input';input.onclick=e=>e.stopPropagation();input.onblur=()=>{isEditingResource=false;saveResource(cid,type,parseInt(input.value)||0);};input.onkeydown=e=>{if(e.key==='Enter')input.blur();if(e.key==='Escape'){isEditingResource=false;el.style.display='';input.remove();}};el.style.display='none';el.parentNode.insertBefore(input,el.nextSibling);input.focus();input.select();}
 function saveResource(cid,type,newVal){wsSend({type:'update-resource',characterId:cid,resourceType:type,newValue:newVal});}
 function quickGiveDream(targetCid){if(!room||!myCharId)return;wsSend({type:'give-dream-player',fromCharacterId:myCharId,toCharacterId:targetCid,amount:1});toast('正在赠送1点梦点...');}
-async function loadResourceLogs(){try{const data=await api('/api/rooms/'+encodeURIComponent(room.id)+'/resource-logs');renderResourceLogs(data.logs);}catch(e){}}
-function renderResourceLogs(logs){const RESOURCE_MAP={dream:'梦点',feeling:'心意点',wonder:'奇迹点'};const html=(logs||[]).map(log=>{const sign=log.change_amount>0?'+':'';const color=log.change_amount>0?'#4caf50':'#f44336';return`<div style="padding:8px;border-bottom:1px solid #eee;font-size:14px"><b>${esc(log.character_name)}</b> <span style="color:${color}">${sign}${log.change_amount}</span> ${RESOURCE_MAP[log.resource_type]||log.resource_type} <span style="color:#999;margin-left:8px">${esc(log.reason||'')}</span><span style="color:#aaa;float:right;font-size:12px">${log.created_at||''}</span></div>`;}).join('');document.getElementById('resource-logs-list').innerHTML=html||'<div style="padding:16px;color:#999">暂无记录</div>';}
+let resourceLogsData=[];let resourceLogsFilter='all';
+async function loadResourceLogs(){try{const data=await api('/api/rooms/'+encodeURIComponent(room.id)+'/resource-logs');resourceLogsData=data.logs||[];renderResourceLogs();}catch(e){}}
+function filterResourceLogs(type){resourceLogsFilter=type;document.querySelectorAll('#resource-logs-filter .btn').forEach(b=>{b.className='btn btn-sm'+(b.dataset.filter===type?' btn-primary':'');});renderResourceLogs();}
+function renderResourceLogs(){const RESOURCE_MAP={dream:'梦点',feeling:'心意点',wonder:'奇迹点'};let logs=resourceLogsData;if(resourceLogsFilter!=='all')logs=logs.filter(l=>l.resource_type===resourceLogsFilter);const html=logs.map(log=>{const sign=log.change_amount>0?'+':'';const color=log.change_amount>0?'#4caf50':'#f44336';return`<div style="padding:8px;border-bottom:1px solid #eee;font-size:14px"><b>${esc(log.character_name)}</b> <span style="color:${color}">${sign}${log.change_amount}</span> ${RESOURCE_MAP[log.resource_type]||log.resource_type} <span style="color:#999;margin-left:8px">${esc(log.reason||'')}</span><span style="color:#aaa;float:right;font-size:12px">${log.created_at||''}</span></div>`;}).join('');document.getElementById('resource-logs-list').innerHTML=html||'<div style="padding:16px;color:#999">暂无记录</div>';}
 
 function copyRoomLink(){if(!room)return;const url=new URL(location.href);url.searchParams.set('room',room.id);navigator.clipboard.writeText(url.toString()).then(()=>{toast('房间链接已复制到剪贴板');}).catch(()=>{const ta=document.createElement('textarea');ta.value=url.toString();document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('房间链接已复制到剪贴板');});}
 

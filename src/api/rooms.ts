@@ -362,6 +362,7 @@ route.get('/:code/resource-logs', authMiddleware, async (c) => {
         JOIN characters c ON rl.character_id = c.id
         WHERE rl.room_code = ?
         ORDER BY rl.created_at DESC
+        LIMIT 30
         `
       )
       .bind(roomId)
