@@ -6,6 +6,7 @@ import charactersRoute from './api/characters';
 import roomsRoute from './api/rooms';
 import bondsRoute from './api/bonds';
 import calculateRoute from './api/calculate';
+import inventoryRoute from './api/inventory';
 import { Bindings } from './types';
 import { RoomDurableObject } from './room-do';
 
@@ -21,6 +22,7 @@ app.route('/api/bonds', bondsRoute);
 
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
 app.route('/api/calculate', calculateRoute);
+app.route('/api/inventory', inventoryRoute);
 
 export { RoomDurableObject };
 export default app;

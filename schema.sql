@@ -83,3 +83,14 @@ CREATE TABLE IF NOT EXISTS resource_logs (
   reason TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- 背包物品表
+CREATE TABLE IF NOT EXISTS inventory_items (
+  id TEXT PRIMARY KEY,
+  character_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (character_id) REFERENCES characters(id)
+);
