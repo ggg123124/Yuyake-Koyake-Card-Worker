@@ -218,6 +218,7 @@ const queue = [];
 let uploading = false;
 let sessionId = null, chunkSeq = 0;
 let ws = null, myCharId = '', myName = '';
+let summaryTimer = null;
 let segCount = 0;
 
 function showMsg(text, kind) {
@@ -503,6 +504,25 @@ async function start() {
     $('btn-stop').disabled = false;
     setState('记录中（VAD 自动切分）', true);
     sysLine(`已开始记录 · 采样率 ${sampleRate}Hz · 停顿 ${VAD.silenceMs}ms 切分 · 模型 ${sess.model}`);
+
+    // 第三条触发路径：前端每分钟催一次摘要。
+    // 服务端有窗口判断（距上次不足 2 分钟会返回 too-soon），所以多客户端同时催不会产生重复；
+    // 这样即使请求内 waitUntil 被回收、cron 传播延迟，只要有人在录音就仍会出摘要。
+    if (summaryTimer) clearInterval(summaryTimer);
+    summaryTimer = setInterval(() => {
+      if (!sessionId) return;
+      fetch(`/api/rooms/${encodeURIComponent(roomCode)}/summaries/run`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token },
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d && d.ok && !d.skipped) {
+            console.info(`[summary] 前端催出摘要 segs=${d.segments} logs=${d.logs} ${d.latencyMs}ms`);
+          }
+        })
+        .catch((e) => console.warn('[summary] 前端触发失败:', e.message));
+    }, 60000);
   } catch (e) {
     setState('未开始', false);
     showMsg('启动失败：' + e.message, 'error');
@@ -511,6 +531,7 @@ async function start() {
 
 async function stop() {
   setState('正在收尾…', false);
+  if (summaryTimer) { clearInterval(summaryTimer); summaryTimer = null; }
   // ① 先彻底停止采集：否则队列会边清边涨（VAD 还在往里塞新片）
   if (processorNode) { try { processorNode.disconnect(); } catch {} processorNode.onaudioprocess = null; }
   if (sourceNode) { try { sourceNode.disconnect(); } catch {} }
