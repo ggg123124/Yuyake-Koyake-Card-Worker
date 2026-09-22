@@ -462,8 +462,15 @@ route.put('/:code/transcript/glossary', authMiddleware, async (c) => {
     .first();
   if (!gm) return c.json({ error: '只有 GM 可以维护词表' }, 403);
 
-  const body = (await c.req.json().catch(() => ({}))) as { extraTerms?: string };
-  const extra = typeof body.extraTerms === 'string' ? body.extraTerms.slice(0, 500) : '';
+  const body = (await c.req.json().catch(() => null)) as { extraTerms?: string } | null;
+  // 字段缺失或类型不对时明确报错，不要静默写成空词表：
+  // 客户端把字段名拼错（实测写成 glossary）会导致已有词表被悄悄清空，
+  // 且接口返回 200 让人以为成功 —— 违反本项目「禁静默降级」约定。
+  // 注意空字符串是合法入参（用于清空词表），只有字段缺失/类型错才拒绝。
+  if (!body || typeof body.extraTerms !== 'string') {
+    return c.json({ error: '请求体需含 extraTerms 字段（字符串；传空字符串表示清空词表）' }, 400);
+  }
+  const extra = body.extraTerms.slice(0, 500);
 
   await db
     .prepare(
