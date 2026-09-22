@@ -3,8 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-[vars]
-JWT_SECRET = "xiyao-wanyao-dev-secret-change-in-production"
+# JWT_SECRET 不再以明文 vars 提交（仓库公开，且明文会随部署暴露）。
+# 生产环境:  npx wrangler secret put JWT_SECRET
+# 本地开发:  写入 .dev.vars（已 gitignore）
 
 [[d1_databases]]
 binding = "DB"
