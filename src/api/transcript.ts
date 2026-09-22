@@ -59,6 +59,29 @@ async function notifyTranscriptUpdate(
   }
 }
 
+// Whisper 在静音/噪声段会吐出训练语料里的字幕套话（经典幻觉），
+// 这类内容会污染跑团记录，直接丢弃——但必须留痕，不静默处理。
+const HALLUCINATION_PATTERNS: RegExp[] = [
+  /请不吝?点赞/,
+  /点赞|订阅|转发|打赏|投币/,
+  /字幕/,
+  /由.{0,8}(提供|制作|翻译)/,
+  /谢谢观看|感谢观看|观看本视频|下次见/,
+  /amara\.org|subtitles?\s*by|transcri(pt|bed)\s*by/i,
+  /www\.|https?:\/\//i,
+  /明镜|点点|MING\s*PAO/i,
+];
+
+function isHallucination(raw: string): boolean {
+  const t = raw.trim().replace(/^[\s,，。、.!！?？…-]+|[\s,，。、.!！?？…-]+$/g, '');
+  if (t.length < 2) return true; // 空串或纯标点
+  if (HALLUCINATION_PATTERNS.some((re) => re.test(t))) return true; // 字幕套话
+  const chars = t.replace(/\s/g, '');
+  if (chars.length >= 6 && new Set(chars).size <= 3) return true; // 单字复读（啊啊啊啊）
+  if (chars.length >= 6 && /^(.{2,4})\1{2,}$/.test(chars)) return true; // 短语整体复读
+  return false;
+}
+
 async function findMember(db: D1Database, roomId: string, userId: string) {
   return db
     .prepare(
@@ -176,6 +199,7 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
 
   const stmts: D1PreparedStatement[] = [];
   const outSegments: Array<{ startMs: number; endMs: number; text: string }> = [];
+  const dropped: string[] = [];
 
   const insertSql = `INSERT OR REPLACE INTO transcript_segments
       (id, session_id, room_id, user_id, character_id, character_name, chunk_seq, seg_index,
@@ -186,6 +210,10 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
     segments.forEach((seg, i) => {
       const text = (seg.text || '').trim();
       if (!text) return;
+      if (isHallucination(text)) {
+        dropped.push(text);
+        return;
+      }
       const s = Math.max(0, Math.round((seg.start ?? 0) * 1000));
       const e = Math.max(s, Math.round((seg.end ?? seg.start ?? 0) * 1000));
       stmts.push(
@@ -209,7 +237,7 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
       );
       outSegments.push({ startMs: startMs + s, endMs: startMs + e, text });
     });
-  } else if (fallbackText.trim()) {
+  } else if (fallbackText.trim() && !isHallucination(fallbackText.trim())) {
     const text = fallbackText.trim();
     stmts.push(
       db
@@ -246,6 +274,12 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
       )
       .bind(outSegments.length, sessionId)
   );
+
+  if (dropped.length) {
+    console.info(
+      `[transcript] 丢弃疑似幻觉 room=${code} seq=${chunkSeq} n=${dropped.length} 样例=${dropped.join(' | ').slice(0, 120)}`
+    );
+  }
 
   if (stmts.length) await db.batch(stmts);
 

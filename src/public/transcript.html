@@ -111,6 +111,7 @@ const VAD = {
   preRollMs: 320,        // 语音前保留，避免吞字头
   gain: 3.2,             // 门限 = 噪声底噪 × gain
   floorAbs: 0.004,       // 绝对下限，避免极安静时门限过低
+  tailSilenceMs: 260,    // 切分时保留的句末静音（留太长会诱发模型幻觉）
 };
 
 let audioCtx = null, sourceNode = null, processorNode = null, mediaStream = null;
@@ -217,7 +218,17 @@ function cutUtterance(reason) {
     console.debug(`[vad] 丢弃过短片段 ${Math.round(durMs)}ms（${reason}）`);
     return;
   }
-  const pcm = mergeFrames(chunksArr);
+  // 裁掉多余尾部静音：留一点句末感即可，过长静音会诱发 Whisper 幻觉（「请点赞订阅」那类）
+  const tailKeep = Math.round((VAD.tailSilenceMs / 1000) * sampleRate);
+  let keep = chunksArr.length;
+  if (silenceRun > tailKeep) {
+    let removed = 0;
+    while (keep > 1 && removed < silenceRun - tailKeep) {
+      removed += chunksArr[keep - 1].length;
+      keep--;
+    }
+  }
+  const pcm = mergeFrames(chunksArr.slice(0, keep));
   consumedSamples += pcm.length;
   queue.push({ pcm, startMs: Math.round((startSamples / sampleRate) * 1000), durMs: Math.round((pcm.length / sampleRate) * 1000), reason });
   $('st-queue').textContent = String(queue.length);
@@ -387,19 +398,26 @@ async function start() {
 
 async function stop() {
   setState('正在收尾…', false);
+  // ① 先彻底停止采集：否则队列会边清边涨（VAD 还在往里塞新片）
+  if (processorNode) { try { processorNode.disconnect(); } catch {} processorNode.onaudioprocess = null; }
+  if (sourceNode) { try { sourceNode.disconnect(); } catch {} }
+  if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+  if (audioCtx) { try { await audioCtx.close(); } catch {} }
+  audioCtx = sourceNode = processorNode = mediaStream = null;
+
   try {
     if (speaking && curFrames.length) cutUtterance('停止');   // 把当前这句收尾
     const t0 = Date.now();
-    while ((queue.length || uploading) && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 150));
+    while (queue.length || uploading) {
+      $('st-queue').textContent = `${queue.length}${uploading ? '（上传中）' : ''}`;
+      if (Date.now() - t0 > 90000) throw new Error('剩余片段上传超时，未全部入库');
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    $('st-queue').textContent = '0';
     if (sessionId) await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/session/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' });
   } catch (e) {
     sysLine('收尾时出错：' + e.message);
   } finally {
-    if (processorNode) { processorNode.disconnect(); processorNode.onaudioprocess = null; }
-    if (sourceNode) sourceNode.disconnect();
-    if (audioCtx) { try { await audioCtx.close(); } catch {} }
-    if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
-    audioCtx = sourceNode = processorNode = mediaStream = null;
     if (ws) { try { ws.onclose = null; ws.close(); } catch {} ws = null; }
     $('btn-start').disabled = false;
     $('btn-stop').disabled = true;
