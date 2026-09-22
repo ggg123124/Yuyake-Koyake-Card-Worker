@@ -129,7 +129,7 @@ export default {
       ctx.waitUntil(handleScheduled(env));
       return;
     }
-    // 其余（每分钟）：兜底补摘要
+    // 其余（每 2 分钟，带步长写法，与摘要窗口一致）：兜底补摘要
     ctx.waitUntil(sweepSummaries(env));
   },
 };

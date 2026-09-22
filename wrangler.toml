@@ -30,4 +30,4 @@ binding = "AI"
 remote = true
 
 [triggers]
-crons = ["0 20 * * *", "* * * * *"]
+crons = ["0 20 * * *", "*/2 * * * *"]
