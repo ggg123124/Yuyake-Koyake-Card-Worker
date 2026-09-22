@@ -17,29 +17,35 @@
   button{font:inherit;min-height:46px;padding:10px 20px;border-radius:8px;border:none;cursor:pointer;background:var(--primary);color:#fff;font-weight:600;transition:background .15s}
   button:hover{background:var(--primary-dark)}
   button.danger{background:var(--danger)}
-  button.ghost{background:#eee;color:#333}
   button:disabled{opacity:.5;cursor:not-allowed}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
   .dot.live{background:var(--ok);animation:pulse 1.4s infinite}
+  .dot.talk{background:#e74c3c}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   .muted{color:var(--muted);font-size:13px}
-  #log{max-height:62vh;overflow-y:auto;padding:4px 2px}
+  #log{max-height:58vh;overflow-y:auto;padding:4px 2px}
   .line{padding:7px 10px;border-radius:8px;margin-bottom:6px;background:#fafafa;display:flex;gap:10px;align-items:baseline}
   .line .t{color:var(--muted);font-size:12px;flex:0 0 62px;font-variant-numeric:tabular-nums}
   .line .who{font-weight:700;flex:0 0 auto;color:var(--primary-dark)}
   .line .txt{flex:1;word-break:break-word}
   .line.mine{background:#FFF3E6}
   .line.sys{background:#f0f7ff;color:#555}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .grid2{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
   @media(min-width:1024px){.grid2{grid-template-columns:2fr 1fr}}
   .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px}
   .kv span:last-child{color:var(--muted)}
+  .meter{height:8px;background:#eee;border-radius:4px;overflow:hidden;margin-top:6px}
+  .meter i{display:block;height:100%;width:0;background:var(--ok);transition:width .08s linear}
+  .vadcfg{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:8px;font-size:13px}
+  .vadcfg label{display:flex;gap:6px;align-items:center;color:var(--muted)}
+  .vadcfg input[type=range]{width:120px}
+  .vadcfg select,.vadcfg input[type=number]{font:inherit;font-size:13px;padding:2px 4px;border:1px solid #ddd;border-radius:6px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
-    <div><b>🎙 实时对话记录</b> <span class="badge" id="room-code">-</span></div>
+    <div><b>🎙 实时对话记录</b> <span class="badge" id="room-code">-</span> <span class="badge" id="vad-badge">VAD 待机</span></div>
     <div class="muted" id="whoami">-</div>
   </div>
 
@@ -55,19 +61,31 @@
         </div>
       </div>
       <div id="log"></div>
-      <div class="muted" id="hint" style="margin-top:8px">点「开始记录」后，你的麦克风会每 30 秒切片上传一次，转写结果实时同步给房间里所有人。</div>
+      <div class="muted" id="hint" style="margin-top:8px">
+        按「说话停顿」自动切分上传：说完一句、静音约 0.7 秒，立刻转写并同步给房间里所有人。
+      </div>
     </div>
 
     <div class="card">
       <b>运行状态</b>
       <div style="margin-top:10px">
+        <div class="kv"><span>VAD 状态</span><span id="st-vad">待机</span></div>
+        <div class="kv"><span>当前音量</span><span id="st-vol">0.000</span></div>
         <div class="kv"><span>已上传片段</span><span id="st-chunks">0</span></div>
         <div class="kv"><span>已转写句数</span><span id="st-segs">0</span></div>
         <div class="kv"><span>最近一次耗时</span><span id="st-ai">-</span></div>
-        <div class="kv"><span>待上传缓冲</span><span id="st-buf">0.0s</span></div>
+        <div class="kv"><span>待上传队列</span><span id="st-queue">0</span></div>
         <div class="kv"><span>时钟偏移</span><span id="st-offset">-</span></div>
         <div class="kv"><span>连接状态</span><span id="st-ws">-</span></div>
       </div>
+      <div class="meter"><i id="vol-bar"></i></div>
+
+      <div class="vadcfg">
+        <label>停顿切分 <input type="range" id="cfg-silence" min="300" max="1600" step="50" value="700"><span id="cfg-silence-v">700ms</span></label>
+        <label>音量门限 <input type="range" id="cfg-gain" min="1.5" max="8" step="0.1" value="3.2"><span id="cfg-gain-v">3.2x</span></label>
+      </div>
+      <div class="muted" style="margin-top:6px">噪声底噪自适应：<span id="st-noise">-</span>（安静房间可不动；环境吵就把门限调高）</div>
+
       <div style="margin-top:12px" class="muted">
         词表（提升专名/黑话识别，GM 可在主站维护）：<br>
         <span id="prompt" style="font-size:12px"></span>
@@ -77,26 +95,43 @@
 </div>
 
 <script>
-const SAMPLE_RATE = 16000;
-const CHUNK_SECONDS = 30;
+const SR_FALLBACK = 16000;
 const $ = (id) => document.getElementById(id);
 
 const params = new URLSearchParams(location.search);
 const roomCode = (params.get('room') || '').trim();
 const token = localStorage.getItem('token') || '';
 
+// ---- VAD 参数（20ms 帧） ----
+const FRAME_MS = 20;
+const VAD = {
+  silenceMs: 700,        // 静音多久 = 一句结束
+  minSpeechMs: 900,      // 短于此不算一句话（滤掉咳嗽/键盘）
+  maxChunkMs: 25000,     // 单人长独白强制切分上限
+  preRollMs: 320,        // 语音前保留，避免吞字头
+  gain: 3.2,             // 门限 = 噪声底噪 × gain
+  floorAbs: 0.004,       // 绝对下限，避免极安静时门限过低
+};
+
 let audioCtx = null, sourceNode = null, processorNode = null, mediaStream = null;
-let chunks = [];            // Float32 累积缓冲
-let buffered = 0;           // 已缓冲采样数
-let uploadedSamples = 0;    // 已上传采样数（用于算 startMs）
-let chunkSeq = 0;
-let sessionId = null;
-let ws = null;
-let myCharId = '';
-let myName = '';
+let sampleRate = SR_FALLBACK;
+let noiseFloor = 0.006;
+
+// VAD 运行态
+let speaking = false;
+let voicedSamples = 0;      // 当前句已累积的「有声」样本数
+let silenceRun = 0;         // 连续静音样本数
+let curFrames = [];         // 当前句的帧（Float32Array）
+let preRoll = [];           // 语音前的滚动缓冲
+let curStartSamples = 0;    // 当前句起点（相对录音开始的样本偏移）
+let consumedSamples = 0;    // 已切走的总样本数
+
+// 上传队列（顺序上传，避免序号乱序）
+const queue = [];
+let uploading = false;
+let sessionId = null, chunkSeq = 0;
+let ws = null, myCharId = '', myName = '';
 let segCount = 0;
-let uploadBusy = false;
-let uploadTimer = null;
 
 function showMsg(text, kind) {
   const el = $('msg');
@@ -108,10 +143,11 @@ function setState(text, live) {
   $('state').textContent = text;
   $('dot').className = 'dot' + (live ? ' live' : '');
 }
-function line(t, who, text, mine) {
+function line(t, who, text, sys) {
   const d = document.createElement('div');
-  d.className = 'line' + (mine ? ' mine' : '');
-  d.innerHTML = `<span class="t">${t}</span><span class="who">${who}</span><span class="txt"></span>`;
+  d.className = 'line' + (sys ? ' sys' : (who.endsWith('（我）') ? ' mine' : ''));
+  d.innerHTML = `<span class="t">${t}</span><span class="who"></span><span class="txt"></span>`;
+  d.querySelector('.who').textContent = who;
   d.querySelector('.txt').textContent = text;
   $('log').appendChild(d);
   $('log').scrollTop = $('log').scrollHeight;
@@ -120,28 +156,26 @@ function hhmmss(ts) {
   const d = new Date(ts);
   return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
+function sysLine(text) { line(hhmmss(Date.now()), '系统', text, true); }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) },
-  });
+  const res = await fetch(path, { ...opts, headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
   if (!res.ok) {
-    let m = res.status + '';
+    let m = String(res.status);
     try { const j = await res.json(); m = j.error || m; } catch {}
     throw new Error(m);
   }
   return res.json();
 }
 
-// ---- WAV 编码（16kHz / 单声道 / 16bit） ----
-function encodeWav(float32) {
+// ---- WAV 编码（单声道 16bit，采样率跟随 AudioContext） ----
+function encodeWav(float32, rate) {
   const buf = new ArrayBuffer(44 + float32.length * 2);
   const v = new DataView(buf);
   const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
   w(0, 'RIFF'); v.setUint32(4, 36 + float32.length * 2, true); w(8, 'WAVE');
   w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, SAMPLE_RATE, true); v.setUint32(28, SAMPLE_RATE * 2, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
   v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   w(36, 'data'); v.setUint32(40, float32.length * 2, true);
   let o = 44;
@@ -152,53 +186,134 @@ function encodeWav(float32) {
   return new Blob([buf], { type: 'audio/wav' });
 }
 
-function drainBuffer() {
-  const total = chunks.reduce((a, b) => a + b.length, 0);
-  const merged = new Float32Array(total);
+function mergeFrames(frames) {
+  const total = frames.reduce((a, b) => a + b.length, 0);
+  const out = new Float32Array(total);
   let off = 0;
-  for (const c of chunks) { merged.set(c, off); off += c.length; }
-  chunks = [];
-  return merged;
+  for (const f of frames) { out.set(f, off); off += f.length; }
+  return out;
+}
+function rmsOf(f) {
+  let s = 0;
+  for (let i = 0; i < f.length; i++) s += f[i] * f[i];
+  return Math.sqrt(s / f.length);
 }
 
-async function flushChunk(force) {
-  if (!sessionId || uploadBusy) return;
-  const needSamples = CHUNK_SECONDS * SAMPLE_RATE;
-  if (!force && buffered < needSamples) { $('st-buf').textContent = (buffered / SAMPLE_RATE).toFixed(1) + 's'; return; }
-  if (buffered < SAMPLE_RATE) { $('st-buf').textContent = (buffered / SAMPLE_RATE).toFixed(1) + 's'; return; }
+// ---- 切出一句，压入上传队列 ----
+function cutUtterance(reason) {
+  const chunksArr = curFrames;
+  const voiced = voicedSamples;
+  const startSamples = curStartSamples;
+  curFrames = [];
+  speaking = false;
+  voicedSamples = 0;
+  silenceRun = 0;
+  curStartSamples = consumedSamples;
 
-  const pcm = drainBuffer();
-  const startMs = Math.round((uploadedSamples / SAMPLE_RATE) * 1000);
+  if (!chunksArr.length) return;
+  const durMs = (voiced / sampleRate) * 1000;
+  if (durMs < VAD.minSpeechMs) {
+    // 太短，当噪声丢弃（留痕，别静默）
+    console.debug(`[vad] 丢弃过短片段 ${Math.round(durMs)}ms（${reason}）`);
+    return;
+  }
+  const pcm = mergeFrames(chunksArr);
+  consumedSamples += pcm.length;
+  queue.push({ pcm, startMs: Math.round((startSamples / sampleRate) * 1000), durMs: Math.round((pcm.length / sampleRate) * 1000), reason });
+  $('st-queue').textContent = String(queue.length);
+  pumpQueue();
+}
+
+// ---- 顺序上传 ----
+async function pumpQueue() {
+  if (uploading || !queue.length || !sessionId) return;
+  uploading = true;
+  const item = queue.shift();
+  $('st-queue').textContent = String(queue.length);
   const seq = chunkSeq++;
-  buffered = 0;
-  uploadBusy = true;
-  $('st-buf').textContent = '0.0s';
-
   try {
-    const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/chunk?sessionId=${encodeURIComponent(sessionId)}&chunkSeq=${seq}&startMs=${startMs}`, {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/chunk?sessionId=${encodeURIComponent(sessionId)}&chunkSeq=${seq}&startMs=${item.startMs}`, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'audio/wav' },
-      body: encodeWav(pcm),
+      body: encodeWav(item.pcm, sampleRate),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.status);
-    uploadedSamples += pcm.length;
     $('st-chunks').textContent = String(Number($('st-chunks').textContent) + 1);
     $('st-ai').textContent = (data.aiMs || 0) + 'ms';
     (data.segments || []).forEach((s) => {
-      line(hhmmss(Date.now()), myName + '（我）', s.text, true);
+      line(hhmmss(Date.now()), myName + '（我）', s.text, false);
       segCount++;
     });
     $('st-segs').textContent = String(segCount);
+    console.debug(`[vad] 上传片段 seq=${seq} ${item.durMs}ms(${item.reason}) → 推理 ${data.aiMs}ms → ${(data.segments || []).length} 句`);
   } catch (e) {
-    // 失败不丢数据：把这段塞回缓冲头部，下一轮重试
-    chunks.unshift(pcm);
-    buffered += pcm.length;
-    chunkSeq = seq; // 序号回退，避免空洞
-    line(hhmmss(Date.now()), '系统', '上传失败，将在下一片重试：' + e.message, false);
+    queue.unshift(item);           // 失败放回队首，下一轮重试（不丢数据）
+    chunkSeq = seq;                // 序号回退，避免出现空洞
+    sysLine('上传失败，稍后重试：' + e.message);
   } finally {
-    uploadBusy = false;
+    uploading = false;
+    $('st-queue').textContent = String(queue.length);
+    if (queue.length) setTimeout(pumpQueue, 60);
   }
+}
+
+// ---- VAD 主循环：把每个回调缓冲切成 20ms 帧逐帧判定 ----
+function processAudio(input, rate) {
+  const frameLen = Math.round((FRAME_MS / 1000) * rate);
+  const preRollFrames = Math.max(1, Math.round(VAD.preRollMs / FRAME_MS));
+  const silenceSamples = Math.round((VAD.silenceMs / 1000) * rate);
+  const maxChunkSamples = Math.round((VAD.maxChunkMs / 1000) * rate);
+
+  for (let i = 0; i + frameLen <= input.length; i += frameLen) {
+    const frame = input.slice(i, i + frameLen);
+    const r = rmsOf(frame);
+    const thr = Math.max(noiseFloor * VAD.gain, VAD.floorAbs);
+    const isSpeech = r > thr;
+
+    // 音量条（可视化）
+    const vol = Math.min(1, r / (thr * 2.2));
+    $('vol-bar').style.width = (vol * 100).toFixed(0) + '%';
+    $('vol-bar').style.background = isSpeech ? '#e74c3c' : '#27ae60';
+    $('st-vol').textContent = r.toFixed(4);
+
+    if (isSpeech) {
+      if (!speaking) {
+        speaking = true;
+        curFrames = preRoll.slice();     // 带上语音前的缓冲，避免吞字头
+        const preSamples = curFrames.reduce((a, b) => a + b.length, 0);
+        curStartSamples = Math.max(0, consumedSamples - preSamples);
+        preRoll = [];
+        voicedSamples = 0;
+      }
+      silenceRun = 0;
+      voicedSamples += frame.length;
+      curFrames.push(frame);
+    } else {
+      // 只在静音期更新噪声底噪
+      noiseFloor = noiseFloor * 0.985 + r * 0.015;
+      $('st-noise').textContent = noiseFloor.toFixed(4);
+      if (speaking) {
+        silenceRun += frame.length;
+        curFrames.push(frame);           // 尾部静音也带上，让模型有句末感
+        if (silenceRun >= silenceSamples) cutUtterance('停顿');
+      } else {
+        preRoll.push(frame);
+        while (preRoll.length > preRollFrames) preRoll.shift();
+      }
+    }
+
+    // 长独白强制切分
+    if (speaking) {
+      const acc = curFrames.reduce((a, b) => a + b.length, 0);
+      if (acc >= maxChunkSamples) cutUtterance('超长');
+    }
+  }
+
+  const talking = speaking;
+  $('vad-badge').textContent = talking ? 'VAD 检测到语音' : 'VAD 静音中';
+  $('st-vad').textContent = talking ? `说话中（已 ${Math.round((voicedSamples / rate) * 1000)}ms）` : '静音中';
+  $('dot').className = 'dot' + (sessionId ? ' live' : '') + (talking ? ' talk' : '');
 }
 
 function connectWs() {
@@ -214,10 +329,8 @@ function connectWs() {
     if (m.type === 'transcript-update') {
       const who = m.speaker || '他人';
       (m.segments || []).forEach((s) => {
-        // 自己的转写已本地显示过，避免重复
-        if (who === myName) return;
-        const ts = s.startMs || s.endMs || Date.now();
-        line(hhmmss(ts), who, s.text, false);
+        if (who === myName) return;    // 自己的已本地显示，避免重复
+        line(hhmmss(s.startMs || s.endMs || Date.now()), who, s.text, false);
       });
     }
   };
@@ -230,7 +343,6 @@ async function start() {
 
   setState('准备中…', false);
   try {
-    // 身份 & 房间校验
     const me = await api('/api/auth/me');
     const room = await api('/api/rooms/' + encodeURIComponent(roomCode));
     const mine = (room.members || []).find((m) => m.userId === me.id);
@@ -240,37 +352,33 @@ async function start() {
     $('room-code').textContent = roomCode;
     $('whoami').textContent = `我：${myName}`;
 
-    // 麦克风
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    audioCtx = new AudioContext({ sampleRate: SR_FALLBACK });
+    sampleRate = audioCtx.sampleRate;
     sourceNode = audioCtx.createMediaStreamSource(mediaStream);
     processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
     processorNode.onaudioprocess = (e) => {
-      const d = new Float32Array(e.inputBuffer.getChannelData(0)); // 拷贝（缓冲会被复用）
-      chunks.push(d);
-      buffered += d.length;
-      $('st-buf').textContent = (buffered / SAMPLE_RATE).toFixed(1) + 's';
+      try { processAudio(new Float32Array(e.inputBuffer.getChannelData(0)), sampleRate); }
+      catch (err) { console.error('[vad] 处理异常', err); }
     };
     sourceNode.connect(processorNode);
     processorNode.connect(audioCtx.destination);
 
-    // 开 session（含对时 + 词表）
     const sess = await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientTs: Date.now(), deviceLabel: (mediaStream.getAudioTracks()[0] || {}).label || '' }),
     });
     sessionId = sess.sessionId;
+    consumedSamples = 0;
     $('st-offset').textContent = (sess.offsetMs >= 0 ? '+' : '') + sess.offsetMs + 'ms';
     $('prompt').textContent = sess.prompt || '(无)';
 
     connectWs();
-    uploadTimer = setInterval(() => flushChunk(false), 3000);
-
     $('btn-start').disabled = true;
     $('btn-stop').disabled = false;
-    setState('记录中（每 30 秒切片上传）', true);
-    line(hhmmss(Date.now()), '系统', `已开始记录，使用模型 ${sess.model}`, false);
+    setState('记录中（VAD 自动切分）', true);
+    sysLine(`已开始记录 · 采样率 ${sampleRate}Hz · 停顿 ${VAD.silenceMs}ms 切分 · 模型 ${sess.model}`);
   } catch (e) {
     setState('未开始', false);
     showMsg('启动失败：' + e.message, 'error');
@@ -280,11 +388,12 @@ async function start() {
 async function stop() {
   setState('正在收尾…', false);
   try {
-    if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
-    await flushChunk(true); // 把剩余缓冲也上传
+    if (speaking && curFrames.length) cutUtterance('停止');   // 把当前这句收尾
+    const t0 = Date.now();
+    while ((queue.length || uploading) && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 150));
     if (sessionId) await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/session/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' });
   } catch (e) {
-    line(hhmmss(Date.now()), '系统', '收尾时出错：' + e.message, false);
+    sysLine('收尾时出错：' + e.message);
   } finally {
     if (processorNode) { processorNode.disconnect(); processorNode.onaudioprocess = null; }
     if (sourceNode) sourceNode.disconnect();
@@ -296,25 +405,30 @@ async function stop() {
     $('btn-stop').disabled = true;
     setState('已停止', false);
     $('st-ws').textContent = '已断开';
-    line(hhmmss(Date.now()), '系统', '已停止记录', false);
+    $('st-vad').textContent = '待机';
+    sysLine('已停止记录');
   }
 }
 
-// 加载历史（重进页面时回显已转写内容）
+// 运行时可调参数
+$('cfg-silence').oninput = (e) => { VAD.silenceMs = Number(e.target.value); $('cfg-silence-v').textContent = e.target.value + 'ms'; };
+$('cfg-gain').oninput = (e) => { VAD.gain = Number(e.target.value); $('cfg-gain-v').textContent = e.target.value + 'x'; };
+
+// 加载历史（重进页面时回显）
 (async () => {
   if (!roomCode || !token) return;
   try {
     const d = await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript`);
     (d.segments || []).forEach((s) => line(hhmmss(s.startMs), s.speaker, s.text, false));
-    $('st-segs').textContent = String((d.segments || []).length);
     segCount = (d.segments || []).length;
-  } catch (e) { /* 未加入房间等情况静默跳过 */ }
+    $('st-segs').textContent = String(segCount);
+  } catch { /* 未加入房间等静默跳过 */ }
 })();
 
 $('room-code').textContent = roomCode || '(缺少 room 参数)';
 $('btn-start').onclick = start;
 $('btn-stop').onclick = stop;
-window.addEventListener('beforeunload', () => { if (sessionId) flushChunk(true); });
+window.addEventListener('beforeunload', () => { if (speaking && curFrames.length) cutUtterance('关闭页面'); });
 </script>
 </body>
 </html>
