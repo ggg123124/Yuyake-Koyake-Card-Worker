@@ -114,8 +114,8 @@ route.post('/:code/transcript/session', authMiddleware, async (c) => {
   await db
     .prepare(
       `INSERT INTO transcript_sessions
-        (id, room_id, user_id, character_id, character_name, client_offset_ms, device_label, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'recording')`
+        (id, room_id, user_id, character_id, character_name, client_offset_ms, device_label, status, started_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'recording', ?)`
     )
     .bind(
       id,
@@ -124,7 +124,8 @@ route.post('/:code/transcript/session', authMiddleware, async (c) => {
       member.character_id ?? null,
       member.character_name ?? null,
       offsetMs,
-      body.deviceLabel ?? null
+      body.deviceLabel ?? null,
+      serverTs
     )
     .run();
 
@@ -153,7 +154,7 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
 
   const sess = await db
     .prepare(
-      `SELECT id, character_id, character_name, client_offset_ms, started_at
+      `SELECT id, character_id, character_name, client_offset_ms, started_at, started_at_ms
        FROM transcript_sessions WHERE id = ? AND room_id = ? AND user_id = ?`
     )
     .bind(sessionId, code, userId)
@@ -163,6 +164,7 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
       character_name: string | null;
       client_offset_ms: number;
       started_at: string;
+      started_at_ms: number | null;
     }>();
   if (!sess) return c.json({ error: '会话不存在' }, 404);
 
@@ -195,7 +197,12 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
   const fallbackText = typeof ai?.text === 'string' ? ai.text : '';
 
   // 该客户端的绝对时间基准：会话创建时的服务器时间 + 该客户端时钟偏移
-  const baseMs = Date.parse(sess.started_at.replace(' ', 'T') + 'Z') + (sess.client_offset_ms || 0);
+  // 优先用毫秒精度的会话起点。started_at 是 SQLite datetime('now')，只有秒级精度，
+  // 实测导致 abs_start_ms 有 ~1.5s 偏差（DC-01 用例）；started_at_ms 为新增的毫秒列，
+  // 存量行由迁移按秒级时间回填（那批数据仍有 ≤1s 误差，新会话不受影响）。
+  const baseMs =
+    (sess.started_at_ms ?? Date.parse(sess.started_at.replace(' ', 'T') + 'Z')) +
+    (sess.client_offset_ms || 0);
 
   // 幂等：同一片重传时先清旧记录
   await db
