@@ -199,6 +199,19 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
     return { ok: false, error: 'empty-summary' };
   }
 
+  // 并发防护：waitUntil 自动触发与手动触发可能同时执行，两者都读到「还没有上一条」
+  // 时会各自算出 now-120s 的首次窗口（起点差几毫秒，唯一索引 (room_id,start_ms) 挡不住），
+  // 结果生成两条覆盖同一时段的摘要（实测 ZTMNSOC 出现窗口相差 2 秒的两条）。
+  // 故落库前复查：若已存在 end_ms 晚于本窗口起点的摘要，说明窗口已被抢先占用，放弃。
+  const raced = await db
+    .prepare('SELECT id FROM room_summaries WHERE room_id = ? AND end_ms > ? ORDER BY end_ms DESC LIMIT 1')
+    .bind(roomId, startMs)
+    .first<{ id: string }>();
+  if (raced) {
+    console.info(`[summary] 跳过：窗口已被并发请求占用 room=${roomId} startMs=${startMs} 已有 end_ms>startMs`);
+    return { ok: true, skipped: 'concurrent-window' as const };
+  }
+
   const id = crypto.randomUUID();
   const ins = await db
     .prepare(
