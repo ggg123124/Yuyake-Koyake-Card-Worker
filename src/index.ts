@@ -89,6 +89,8 @@ async function sweepSummaries(env: Bindings) {
     .all<{ room_id: string }>();
 
   const rooms = rows.results || [];
+  // 每次执行都留痕：否则「cron 到底跑没跑」无从判断（本项目禁用静默路径）
+  console.info(`[summary] sweep 扫描到 ${rooms.length} 个活跃房间（近 10 分钟有转写且仍存在）`);
   if (!rooms.length) return;
 
   for (const r of rooms) {

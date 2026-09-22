@@ -131,6 +131,22 @@ export async function archiveAndDeleteRoom(
     .all<{ character_name: string | null; abs_start_ms: number; abs_end_ms: number; text: string }>();
   const transcripts = transcriptResult.results || [];
 
+  // 事件摘要：LLM 每约 2 分钟汇总的一条记录（含语音 + 游戏操作）
+  const summaryResult = await db
+    .prepare(
+      `SELECT start_ms, end_ms, summary, source_segments, source_logs
+       FROM room_summaries WHERE room_id = ? ORDER BY start_ms ASC`
+    )
+    .bind(roomId)
+    .all<{
+      start_ms: number;
+      end_ms: number;
+      summary: string;
+      source_segments: number;
+      source_logs: number;
+    }>();
+  const summaries = summaryResult.results || [];
+
   const snapshot = {
     room: {
       id: room.id,
@@ -185,6 +201,13 @@ export async function archiveAndDeleteRoom(
       startMs: t.abs_start_ms,
       endMs: t.abs_end_ms,
       text: t.text,
+    })),
+    summaries: summaries.map((s) => ({
+      startMs: s.start_ms,
+      endMs: s.end_ms,
+      summary: s.summary,
+      sourceSegments: s.source_segments,
+      sourceLogs: s.source_logs,
     })),
   };
 
