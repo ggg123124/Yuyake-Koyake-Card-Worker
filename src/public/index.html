@@ -561,13 +561,16 @@ function enterRoomFromLobby(code,charId){if(charId){selectedCharId=charId;localS
 let transcriptCache=[];
 let summaryCache=[];
 
+// 无房间上下文时不能静默留白（本项目约定：任何降级路径都要有可见反馈）
+function panelNotice(msg){const list=document.getElementById('summary-list');if(list)list.innerHTML='<div style="color:#c0392b;font-size:13px;padding:8px 0">'+esc(msg)+'</div>';}
+
 function toggleTranscriptPanel(){const b=document.getElementById('transcript-body');if(!b)return;const isHidden=b.classList.toggle('hidden');const t=document.getElementById('transcript-toggle');if(t)t.textContent=isHidden?'点击展开 ▾':'点击收起 ▴';if(!isHidden){loadSummaries();loadTranscriptHistory();}}
 
 function renderSummaryLine(s){const list=document.getElementById('summary-list');if(!list)return;const time=s.endMs?formatLocalTime(new Date(s.endMs).toISOString()):'';const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #f2f2f2';const head=document.createElement('div');head.style.cssText='color:#999;font-size:12px;margin-bottom:3px';head.textContent=time+(s.sourceSegments?' · 语音 '+s.sourceSegments+' 条':'');const body=document.createElement('div');body.style.lineHeight='1.7';body.textContent=s.summary||'';d.appendChild(head);d.appendChild(body);list.appendChild(d);list.scrollTop=list.scrollHeight;}
 
 function setSummaryCount(n){const el=document.getElementById('transcript-count');if(el)el.textContent='（'+n+' 条摘要）';}
 
-async function loadSummaries(){if(!room)return;try{const d=await api('/api/rooms/'+encodeURIComponent(room.id)+'/summaries');const list=document.getElementById('summary-list');if(list)list.innerHTML='';summaryCache=d.summaries||[];if(!summaryCache.length&&list){list.innerHTML='<div style="color:#999;font-size:13px;padding:8px 0">还没有摘要 —— 开始录音后每约 2 分钟会自动生成一条</div>';}summaryCache.forEach(renderSummaryLine);setSummaryCount(summaryCache.length);}catch(e){console.warn('[summary] 拉取摘要失败:',e.message);const list=document.getElementById('summary-list');if(list)list.innerHTML='<div style="color:#c0392b;font-size:13px;padding:8px 0">摘要加载失败：'+esc(e.message)+'（可点「🔄 刷新」重试）</div>';}}
+async function loadSummaries(){if(!room){panelNotice('房间信息未就绪，无法加载事件摘要（请在某个房间页面里使用本面板）');return;}try{const d=await api('/api/rooms/'+encodeURIComponent(room.id)+'/summaries');const list=document.getElementById('summary-list');if(list)list.innerHTML='';summaryCache=d.summaries||[];if(!summaryCache.length&&list){list.innerHTML='<div style="color:#999;font-size:13px;padding:8px 0">还没有摘要 —— 开始录音后每约 2 分钟会自动生成一条</div>';}summaryCache.forEach(renderSummaryLine);setSummaryCount(summaryCache.length);}catch(e){console.warn('[summary] 拉取摘要失败:',e.message);const list=document.getElementById('summary-list');if(list)list.innerHTML='<div style="color:#c0392b;font-size:13px;padding:8px 0">摘要加载失败：'+esc(e.message)+'（可点「🔄 刷新」重试）</div>';}}
 
 function renderTranscriptLine(t){const list=document.getElementById('transcript-list');if(!list)return;const time=t.startMs?formatLocalTime(new Date(t.startMs).toISOString()):'';const d=document.createElement('div');d.style.cssText='padding:5px 0;border-bottom:1px solid #f5f5f5;display:flex;gap:10px;align-items:baseline';d.innerHTML='<span style="color:#999;font-size:12px;flex:0 0 60px"></span><b style="flex:0 0 auto;color:#D35400"></b><span style="flex:1"></span>';d.children[0].textContent=time;d.children[1].textContent=t.characterName||'未知';d.children[2].textContent=t.text||'';list.appendChild(d);list.scrollTop=list.scrollHeight;}
 
