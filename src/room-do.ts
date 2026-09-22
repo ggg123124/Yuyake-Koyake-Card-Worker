@@ -78,6 +78,20 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
 
+    // RPC 调用：广播事件摘要（LLM 每约 2 分钟汇总一次）
+    if (url.pathname.endsWith('/broadcast-summary')) {
+      const body = (await request.json().catch(() => ({}))) as {
+        id?: string;
+        startMs?: number;
+        endMs?: number;
+        summary?: string;
+      };
+      await this.broadcastSummary(body);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 
@@ -771,6 +785,29 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     console.info(
       `[do] transcript-update room=${this.roomId} segs=${(payload.segments || []).length} sent=${ok}`
+    );
+  }
+
+  // 事件摘要：LLM 汇总后广播给房间内所有人
+  async broadcastSummary(payload: { id?: string; startMs?: number; endMs?: number; summary?: string }) {
+    const message: WSResponse = {
+      type: 'summary-update',
+      id: payload.id ?? null,
+      startMs: payload.startMs ?? null,
+      endMs: payload.endMs ?? null,
+      summary: payload.summary ?? '',
+    };
+    let ok = 0;
+    for (const [ws] of this.sessions) {
+      try {
+        this.send(ws, message);
+        ok++;
+      } catch (e) {
+        console.warn('[do] summary broadcast failed for a socket:', e);
+      }
+    }
+    console.info(
+      `[do] summary-update room=${this.roomId} sent=${ok} chars=${(payload.summary || '').length}`
     );
   }
 

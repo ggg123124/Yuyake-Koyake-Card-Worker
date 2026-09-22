@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
 import { Bindings, Variables } from '../types';
+import { maybeSummarize } from './summarize';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -286,6 +287,19 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
   // 实时推送：把这一片的转写结果广播给房间内所有人
   if (outSegments.length) {
     await notifyTranscriptUpdate(c.env, code, sess.character_name ?? null, outSegments);
+
+    // 每约 2 分钟把「语音 + 游戏操作」汇总成一条事件摘要。
+    // 用 waitUntil 不阻塞上传响应；失败只留痕，不影响已入库的转写结果。
+    const p = maybeSummarize(c.env, code).catch((e) =>
+      console.warn(
+        `[summary] trigger-failed room=${code} err=${e instanceof Error ? e.message : String(e)}`
+      )
+    );
+    try {
+      c.executionCtx.waitUntil(p);
+    } catch {
+      // 无 executionCtx（如部分测试环境）时不等待，摘要会在下次触发时生成
+    }
   }
 
   console.info(
@@ -349,6 +363,60 @@ route.get('/:code/transcript', authMiddleware, async (c) => {
     .all();
 
   return c.json({ segments, sessions: sessions.results || [] });
+});
+
+// ---- 事件摘要（每约 2 分钟由 LLM 汇总「语音 + 游戏操作」，替代逐句字幕展示） ----
+route.get('/:code/summaries', authMiddleware, async (c) => {
+  const code = c.req.param('code');
+  const userId = c.get('userId');
+  const db = c.env.DB;
+
+  const member = await findMember(db, code, userId);
+  if (!member) return c.json({ error: '你不在该房间中' }, 403);
+
+  const rows = await db
+    .prepare(
+      `SELECT id, start_ms, end_ms, summary, source_segments, source_logs, created_at
+       FROM room_summaries WHERE room_id = ? ORDER BY start_ms ASC LIMIT 500`
+    )
+    .bind(code)
+    .all<{
+      id: string;
+      start_ms: number;
+      end_ms: number;
+      summary: string;
+      source_segments: number;
+      source_logs: number;
+      created_at: string;
+    }>();
+
+  return c.json({
+    summaries: (rows.results || []).map((r) => ({
+      id: r.id,
+      startMs: r.start_ms,
+      endMs: r.end_ms,
+      summary: r.summary,
+      sourceSegments: r.source_segments,
+      sourceLogs: r.source_logs,
+      createdAt: r.created_at,
+    })),
+  });
+});
+
+// ---- 手动催一次摘要（GM 用；也便于验证链路） ----
+route.post('/:code/summaries/run', authMiddleware, async (c) => {
+  const code = c.req.param('code');
+  const userId = c.get('userId');
+  const db = c.env.DB;
+
+  const member = await findMember(db, code, userId);
+  if (!member) return c.json({ error: '你不在该房间中' }, 403);
+
+  const result = await maybeSummarize(c.env, code);
+  console.info(
+    `[summary] manual room=${code} user=${userId} result=${JSON.stringify(result).slice(0, 180)}`
+  );
+  return c.json(result);
 });
 
 // ---- 房间词表（成员可读，GM 可写） ----
