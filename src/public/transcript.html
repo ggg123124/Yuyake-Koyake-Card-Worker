@@ -34,6 +34,7 @@
   @media(min-width:1024px){.grid2{grid-template-columns:2fr 1fr}}
   .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px}
   .kv span:last-child{color:var(--muted)}
+  .hidden{display:none}
   .meter{height:8px;background:#eee;border-radius:4px;overflow:hidden;margin-top:6px}
   .meter i{display:block;height:100%;width:0;background:var(--ok);transition:width .08s linear}
   .vadcfg{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:8px;font-size:13px}
@@ -50,6 +51,91 @@
   </div>
 
   <div id="msg" class="card" style="display:none"></div>
+
+  <!-- 使用说明：面向第一次使用的玩家，默认展开、可折叠，折叠状态记在本地 -->
+  <div class="card" id="help-card">
+    <div onclick="toggleHelp()" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center">
+      <b>📖 使用说明 <span style="color:#999;font-size:13px;font-weight:400">（第一次用花 30 秒看这个）</span></b>
+      <span id="help-toggle" style="color:#D35400;font-size:13px">收起 ▴</span>
+    </div>
+    <div id="help-body" style="margin-top:14px">
+
+      <div style="background:#FFF3E6;border-left:4px solid #E67E22;padding:10px 12px;border-radius:6px;margin-bottom:14px">
+        <b>⚠️ 开始之前：戴上耳机</b>
+        <div style="font-size:14px;margin-top:4px;color:#555">用外放音箱的话，音箱里别人的声音会被你的麦克风一起录进去，同一句话会被识别成两遍。耳机能完全避免这个问题。</div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <b style="color:#D35400">① 三步开始</b>
+        <ol style="margin:6px 0 0 22px;padding:0;font-size:14px;line-height:1.9">
+          <li>点下面的「🎙 开始记录」，浏览器问麦克风权限时选 <b>允许</b></li>
+          <li>点完就去做别的事：这个页面<b>可以切标签、可以最小化，但别关掉</b></li>
+          <li>跑团过程中正常说话就行，它会自己识别</li>
+        </ol>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <b style="color:#D35400">② 它会自己干活</b>
+        <ul style="margin:6px 0 0 22px;padding:0;font-size:14px;line-height:1.9">
+          <li>你说完一句、停顿一下（约 0.7 秒），它就自动把这句话记下来，几秒内出字</li>
+          <li>房间里<b>每个人各自开一次</b>，大家的文字会互相实时同步 —— 你不用管别人，把自己这段开好就行</li>
+          <li>玩完点「⏹ 停止」再关页面。直接关页面会丢掉最后那句没传完的</li>
+          <li>识别出来的文字会存进房间归档，<b>房间里所有人以后都能查</b></li>
+        </ul>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <b style="color:#D35400">③ 觉得不好用？只需要调这两个</b>
+        <div style="font-size:12px;color:#999;margin:4px 0 2px">在右侧「运行状态」面板底部，拖动滑杆即可，<b>随时生效</b></div>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr style="border-bottom:1px solid #f0f0f0">
+            <td style="padding:8px 10px 8px 0;white-space:nowrap;vertical-align:top;border-bottom:1px solid #f0f0f0">
+              <b>停顿切分</b><br><span style="color:#999;font-size:12px">默认 700ms</span>
+            </td>
+            <td style="padding:8px 0;border-bottom:1px solid #f0f0f0">
+              等多久算「这句话说完了」<br>
+              <span style="color:#4caf50">出字太慢</span> → 调小到 400～500ms<br>
+              <span style="color:#e67e22">一句话老被切成两半</span> → 调大到 1000～1200ms
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px 8px 0;white-space:nowrap;vertical-align:top">
+              <b>音量门限</b><br><span style="color:#999;font-size:12px">默认 3.2 倍</span>
+            </td>
+            <td style="padding:8px 0">
+              多大的声音才算「有人在说话」<br>
+              <span style="color:#e67e22">风扇/音乐吵，老蹦出乱七八糟的字</span> → 调高到 4～6 倍<br>
+              <span style="color:#4caf50">说话声轻它听不到</span> → 调低到 2～2.5 倍
+            </td>
+          </tr>
+        </table>
+        <div style="font-size:13px;color:#999;margin-top:8px">
+          调到合适就一直用，<b>一场团调一次就够</b>。这两个只影响你自己的电脑，跟别人互不干扰。
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <b style="color:#D35400">④ 出问题？先看右侧这几个数字</b>
+        <ul style="margin:6px 0 0 22px;padding:0;font-size:14px;line-height:1.9">
+          <li><b>VAD 状态</b>：你说话时它应该变成「说话中」。一直「静音中」→ 门限太高，或麦克风选错了</li>
+          <li><b>当前音量</b>：说话时应该在 0.01 以上明显跳动。一直 0.000 → 麦克风没收到声音（检查系统默认输入设备）</li>
+          <li><b>噪声底噪</b>：安静房间一般 0.0002 左右。如果明显偏高（超过 0.01）说明环境吵，把门限调高</li>
+          <li><b>连接状态</b>：要显示「已连接」。否则别人看不到你说的话</li>
+          <li><b>待上传队列</b>：正常是 0；偶尔 1-2 说明正在传，不用管；一直堆着不降说明网络有问题</li>
+        </ul>
+      </div>
+
+      <div>
+        <b style="color:#D35400">⑤ 关于「识别不准」—— 这是正常的</b>
+        <div style="font-size:14px;line-height:1.8;color:#555;margin-top:4px">
+          语音识别偶尔会把同音词听错（比如「涉世」听成「涉事」、「心意点」听成「新一点」），这不影响记录的价值 ——
+          内容都会存进归档，之后可以用大模型再整理一遍。<br>
+          如果某个专有名词总是错，<b>告诉 GM</b>，他可以在主站的房间词表里把它加进去，识别会明显变准。
+        </div>
+      </div>
+
+    </div>
+  </div>
 
   <div class="grid2">
     <div class="card">
@@ -468,6 +554,22 @@ $('cfg-gain').oninput = (e) => { VAD.gain = Number(e.target.value); $('cfg-gain-
     segCount = (d.segments || []).length;
     $('st-segs').textContent = String(segCount);
   } catch { /* 未加入房间等静默跳过 */ }
+})();
+
+// ---- 使用说明折叠（状态记在本地，看过的玩家不用每次再展开） ----
+function toggleHelp(){
+  const b=document.getElementById('help-body');if(!b)return;
+  const hidden=b.classList.toggle('hidden');
+  const t=document.getElementById('help-toggle');if(t)t.textContent=hidden?'展开 ▾':'收起 ▴';
+  try{localStorage.setItem('transcriptHelpHidden',hidden?'1':'0');}catch{}
+}
+(function initHelp(){
+  try{
+    if(localStorage.getItem('transcriptHelpHidden')==='1'){
+      const b=document.getElementById('help-body');if(b)b.classList.add('hidden');
+      const t=document.getElementById('help-toggle');if(t)t.textContent='展开 ▾';
+    }
+  }catch{}
 })();
 
 $('room-code').textContent = roomCode || '(缺少 room 参数)';
