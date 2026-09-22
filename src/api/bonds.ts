@@ -73,9 +73,9 @@ route.post('/', async (c) => {
 
   // 校验 fromCharacterId 属于当前用户
   const character = await db
-    .prepare('SELECT user_id FROM characters WHERE id = ?')
+    .prepare('SELECT user_id, name FROM characters WHERE id = ?')
     .bind(body.fromCharacterId)
-    .first<{ user_id: string }>();
+    .first<{ user_id: string; name: string }>();
 
   if (!character) {
     return c.json({ error: '来源角色不存在' }, 404);
@@ -140,7 +140,7 @@ route.post('/', async (c) => {
       id,
       body.roomId,
       body.fromCharacterId,
-      null,
+      character.name ?? null,
       body.toCharacterName,
       body.toCharacterId ?? null,
       body.bondType,

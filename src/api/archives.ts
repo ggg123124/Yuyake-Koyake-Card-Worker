@@ -95,9 +95,13 @@ export async function archiveAndDeleteRoom(
 
   const bondsResult = await db
     .prepare(
-      `SELECT id, from_character_id, from_character_name, to_character_name, to_character_id,
-              bond_type, bond_level, is_intense, sort_order
-       FROM bonds WHERE room_id = ? ORDER BY sort_order ASC`
+      `SELECT b.id, b.from_character_id,
+              COALESCE(b.from_character_name, c.name) AS from_character_name,
+              b.to_character_name, b.to_character_id,
+              b.bond_type, b.bond_level, b.is_intense, b.sort_order
+       FROM bonds b
+       LEFT JOIN characters c ON c.id = b.from_character_id
+       WHERE b.room_id = ? ORDER BY b.sort_order ASC`
     )
     .bind(roomId)
     .all<BondRow>();
