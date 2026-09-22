@@ -13,7 +13,7 @@
 :root{--primary:#E67E22;--primary-light:#F39C12;--primary-dark:#D35400;--bg:#FFF8F0;--card:#fff;--text:#333;--danger:#c0392b;--success:#27ae60;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:16px;line-height:1.5;min-height:100vh}
-.view{display:none;padding:12px;max-width:1400px;margin:0 auto}
+.view{display:none;padding:12px;width:100%;max-width:none;margin:0 auto}
 .view.active{display:block}
 .card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;min-width:48px;padding:12px 20px;font-size:18px;border-radius:8px;border:none;cursor:pointer;touch-action:manipulation;transition:background .2s,color .2s,transform .1s;margin:4px}
@@ -83,7 +83,8 @@ th{background:#fafafa}
 a.btn{text-decoration:none}
 .room-info{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .room-col-left,.room-col-right{display:contents}
-@media(min-width:1024px){.accordion{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}.room-col-left{grid-column:1;display:flex;flex-direction:column}.room-col-right{grid-column:2;display:flex;flex-direction:column}}
+@media(min-width:1024px){.accordion{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}.room-col-left{grid-column:1;display:flex;flex-direction:column}.room-col-right{grid-column:2;display:flex;flex-direction:column}#view-lobby.active{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:start}#view-lobby.active>.topbar,#view-lobby.active>#lobby-actions{grid-column:1/-1}#view-lobby.active>#lobby-actions{display:flex;flex-wrap:wrap;gap:12px}}
+@media(min-width:1700px){#view-lobby.active{grid-template-columns:1fr 1fr 1fr}}
 @media(max-width:768px){.accordion{display:block}.room-col-left,.room-col-right{display:contents}}
 @media(max-width:600px){.keyboard-grid{grid-template-columns:repeat(5,1fr)}.grid-btns{grid-template-columns:repeat(2,1fr)}}
 .resource-group{display:inline-flex;align-items:center;gap:4px;font-size:13px;margin:0 4px;flex-wrap:nowrap;font-variant-numeric:tabular-nums}
