@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   name TEXT,
   gm_user_id TEXT,
   phase TEXT DEFAULT 'scene',
+  last_active_at TEXT DEFAULT (datetime('now')),
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (gm_user_id) REFERENCES users(id)
 );
@@ -94,3 +95,32 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (character_id) REFERENCES characters(id)
 );
+
+-- 房间归档表
+CREATE TABLE IF NOT EXISTS room_archives (
+  id TEXT PRIMARY KEY,
+  room_id TEXT NOT NULL,
+  room_name TEXT,
+  phase TEXT,
+  room_created_at TEXT,
+  archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+  archived_by TEXT,
+  archive_reason TEXT NOT NULL,
+  member_count INTEGER NOT NULL DEFAULT 0,
+  log_count INTEGER NOT NULL DEFAULT 0,
+  snapshot TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_room_archives_room ON room_archives(room_id);
+CREATE INDEX IF NOT EXISTS idx_room_archives_archived_at ON room_archives(archived_at DESC);
+
+-- 房间归档查看权限表
+CREATE TABLE IF NOT EXISTS room_archive_viewers (
+  archive_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  character_name TEXT,
+  role TEXT,
+  PRIMARY KEY (archive_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_viewers_user ON room_archive_viewers(user_id);
