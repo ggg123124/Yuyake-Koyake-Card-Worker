@@ -89,7 +89,15 @@ async function sweepSummaries(env: Bindings) {
     .all<{ room_id: string }>();
 
   const rooms = rows.results || [];
-  // 每次执行都留痕：否则「cron 到底跑没跑」无从判断（本项目禁用静默路径）
+  // 每次执行都写心跳：wrangler tail 不展示 scheduled 事件，只有写进库才能确认
+  // 「cron 到底有没有被触发」这个关键事实（本项目禁用无从核查的静默路径）。
+  try {
+    await env.DB.prepare('INSERT INTO cron_heartbeat (job, scanned, note) VALUES (?, ?, ?)')
+      .bind('sweep-summaries', rooms.length, `since=${since}`)
+      .run();
+  } catch (e) {
+    console.warn(`[summary] heartbeat-failed err=${e instanceof Error ? e.message : String(e)}`);
+  }
   console.info(`[summary] sweep 扫描到 ${rooms.length} 个活跃房间（近 10 分钟有转写且仍存在）`);
   if (!rooms.length) return;
 
