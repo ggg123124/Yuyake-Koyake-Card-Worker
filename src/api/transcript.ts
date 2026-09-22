@@ -146,6 +146,11 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
     return c.json({ error: '参数无效' }, 400);
   }
 
+  // 先校验成员身份：否则非成员会因 session 查不到而得到 404，
+  // 与其他接口的 403 语义不一致（安全上不越权，但对外行为不统一、可被用于探测）
+  const member = await findMember(db, code, userId);
+  if (!member) return c.json({ error: '你不在该房间中' }, 403);
+
   const sess = await db
     .prepare(
       `SELECT id, character_id, character_name, client_offset_ms, started_at
@@ -314,6 +319,10 @@ route.post('/:code/transcript/session/:sessionId/stop', authMiddleware, async (c
   const sessionId = c.req.param('sessionId');
   const userId = c.get('userId');
   const db = c.env.DB;
+
+  // 同 chunk：非成员先给 403，避免 404/403 语义不一致
+  const member = await findMember(db, code, userId);
+  if (!member) return c.json({ error: '你不在该房间中' }, 403);
 
   const r = await db
     .prepare(
