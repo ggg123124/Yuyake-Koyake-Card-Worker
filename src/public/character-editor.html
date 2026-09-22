@@ -952,9 +952,16 @@
     if (sum > 8) {
       sumEl.classList.add('warning');
       sumEl.innerHTML = '已分配：<span id="sum-value">' + sum + '</span> / 8 点 ⚠️ 超出上限！';
+      document.getElementById('btn-save').disabled = true;
+      let warn = document.getElementById('attr-overflow-hint');
+      if (!warn) { warn = document.createElement('div'); warn.id = 'attr-overflow-hint'; warn.style.cssText = 'color:var(--danger,#c0392b);font-size:14px;margin-top:4px'; sumEl.parentNode.insertBefore(warn, sumEl.nextSibling); }
+      warn.textContent = '四维合计超出 8 点，请先调整';
     } else {
       sumEl.classList.remove('warning');
       sumEl.innerHTML = '已分配：<span id="sum-value">' + sum + '</span> / 8 点';
+      document.getElementById('btn-save').disabled = false;
+      const warn = document.getElementById('attr-overflow-hint');
+      if (warn) warn.remove();
     }
   }
 
