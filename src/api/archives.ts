@@ -70,7 +70,7 @@ export async function archiveAndDeleteRoom(
   db: D1Database,
   roomId: string,
   opts: ArchiveOpts
-): Promise<{ archiveId: string; memberCount: number; logCount: number } | null> {
+): Promise<{ archiveId: string; memberCount: number; logCount: number; transcriptCount: number } | null> {
   const room = await db
     .prepare('SELECT id, name, phase, created_at FROM rooms WHERE id = ?')
     .bind(roomId)
@@ -118,6 +118,18 @@ export async function archiveAndDeleteRoom(
     .bind(roomId)
     .all<LogRow>();
   const logs = logsResult.results || [];
+
+  // 对话记录：VAD 实时转写的合并时间线（按校准后的绝对时间排序，天然跨人合并）
+  const transcriptResult = await db
+    .prepare(
+      `SELECT character_name, abs_start_ms, abs_end_ms, text
+       FROM transcript_segments
+       WHERE room_id = ?
+       ORDER BY abs_start_ms ASC, seg_index ASC`
+    )
+    .bind(roomId)
+    .all<{ character_name: string | null; abs_start_ms: number; abs_end_ms: number; text: string }>();
+  const transcripts = transcriptResult.results || [];
 
   const snapshot = {
     room: {
@@ -168,14 +180,20 @@ export async function archiveAndDeleteRoom(
       changeAmount: l.change_amount,
       reason: l.reason || '',
     })),
+    transcripts: transcripts.map((t) => ({
+      characterName: t.character_name || '',
+      startMs: t.abs_start_ms,
+      endMs: t.abs_end_ms,
+      text: t.text,
+    })),
   };
 
   const archiveId = crypto.randomUUID();
 
   await db
     .prepare(
-      `INSERT INTO room_archives (id, room_id, room_name, phase, room_created_at, archived_by, archive_reason, member_count, log_count, snapshot)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO room_archives (id, room_id, room_name, phase, room_created_at, archived_by, archive_reason, member_count, log_count, transcript_count, snapshot)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       archiveId,
@@ -187,6 +205,7 @@ export async function archiveAndDeleteRoom(
       opts.reason,
       members.length,
       logs.length,
+      transcripts.length,
       JSON.stringify(snapshot)
     )
     .run();
@@ -219,10 +238,10 @@ export async function archiveAndDeleteRoom(
   await db.prepare('DELETE FROM rooms WHERE id = ?').bind(roomId).run();
 
   console.log(
-    `[archive] room=${roomId} reason=${opts.reason} members=${members.length} logs=${logs.length} ok`
+    `[archive] room=${roomId} reason=${opts.reason} members=${members.length} logs=${logs.length} transcripts=${transcripts.length} ok`
   );
 
-  return { archiveId, memberCount: members.length, logCount: logs.length };
+  return { archiveId, memberCount: members.length, logCount: logs.length, transcriptCount: transcripts.length };
 }
 
 // GET / - 当前用户参与过的归档列表
@@ -233,7 +252,7 @@ route.get('/', async (c) => {
   const result = await db
     .prepare(
       `SELECT ra.id, ra.room_id, ra.room_name, ra.phase, ra.archived_at, ra.archive_reason,
-              ra.member_count, ra.log_count, rav.character_name, rav.role
+              ra.member_count, ra.log_count, ra.transcript_count, rav.character_name, rav.role
        FROM room_archives ra
        JOIN room_archive_viewers rav ON ra.id = rav.archive_id
        WHERE rav.user_id = ?
@@ -249,6 +268,7 @@ route.get('/', async (c) => {
       archive_reason: string;
       member_count: number;
       log_count: number;
+      transcript_count: number;
       character_name: string | null;
       role: string | null;
     }>();
@@ -263,6 +283,7 @@ route.get('/', async (c) => {
       archiveReason: r.archive_reason,
       memberCount: r.member_count,
       logCount: r.log_count,
+      transcriptCount: r.transcript_count,
       myCharacterName: r.character_name,
       myRole: r.role,
     }))
@@ -287,6 +308,7 @@ route.get('/:id', async (c) => {
       archive_reason: string;
       member_count: number;
       log_count: number;
+      transcript_count: number;
       snapshot: string;
     }>();
 
@@ -312,6 +334,7 @@ route.get('/:id', async (c) => {
     archiveReason: archive.archive_reason,
     memberCount: archive.member_count,
     logCount: archive.log_count,
+    transcriptCount: archive.transcript_count,
     snapshot: JSON.parse(archive.snapshot),
   });
 });
