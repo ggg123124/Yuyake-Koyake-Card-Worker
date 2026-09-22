@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
 import { verifyToken } from '../utils/auth';
 import { Bindings, Variables } from '../types';
+import { archiveAndDeleteRoom } from './archives';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -36,7 +37,7 @@ route.post('/', authMiddleware, async (c) => {
   }
 
   await db
-    .prepare('INSERT INTO rooms (id, name, gm_user_id, phase) VALUES (?, ?, ?, ?)')
+    .prepare("INSERT INTO rooms (id, name, gm_user_id, phase, last_active_at) VALUES (?, ?, ?, ?, datetime('now'))")
     .bind(id, name || null, userId, 'scene')
     .run();
 
@@ -107,11 +108,63 @@ route.post('/:code/join', authMiddleware, async (c) => {
     .bind(roomId, characterId, userId, role)
     .run();
 
+  await db
+    .prepare("UPDATE rooms SET last_active_at = datetime('now') WHERE id = ?")
+    .bind(roomId)
+    .run();
+
   return c.json({
     roomId,
     characterId,
     role,
   });
+});
+
+// GET /mine - 获取当前用户加入的房间列表（必须在 /:code 之前注册）
+route.get('/mine', authMiddleware, async (c) => {
+  const userId = c.get('userId');
+  const db = c.env.DB;
+
+  const result = await db
+    .prepare(
+      `SELECT r.id, r.name, r.phase, r.last_active_at, r.created_at,
+              rm.role, rm.character_id, rm.joined_at,
+              c.name as character_name,
+              (SELECT COUNT(*) FROM room_members WHERE room_id = r.id) as member_count
+       FROM room_members rm
+       JOIN rooms r ON rm.room_id = r.id
+       JOIN characters c ON rm.character_id = c.id
+       WHERE rm.user_id = ?
+       ORDER BY COALESCE(r.last_active_at, r.created_at) DESC`
+    )
+    .bind(userId)
+    .all<{
+      id: string;
+      name: string | null;
+      phase: string;
+      last_active_at: string | null;
+      created_at: string;
+      role: string;
+      character_id: string;
+      joined_at: string;
+      character_name: string;
+      member_count: number;
+    }>();
+
+  return c.json(
+    (result.results || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      phase: r.phase,
+      role: r.role,
+      characterId: r.character_id,
+      characterName: r.character_name,
+      memberCount: r.member_count,
+      joinedAt: r.joined_at,
+      lastActiveAt: r.last_active_at,
+      createdAt: r.created_at,
+    }))
+  );
 });
 
 // GET /:code - 获取房间信息（初始加载用）
@@ -318,7 +371,58 @@ route.post('/:code/leave', authMiddleware, async (c) => {
     .bind(roomId, characterId)
     .run();
 
+  await db
+    .prepare("UPDATE rooms SET last_active_at = datetime('now') WHERE id = ?")
+    .bind(roomId)
+    .run();
+
   return c.json({ success: true });
+});
+
+// DELETE /:code - 销毁房间（先归档再删除），仅 GM 可操作
+route.delete('/:code', authMiddleware, async (c) => {
+  const roomId = c.req.param('code');
+  const userId = c.get('userId');
+  const db = c.env.DB;
+
+  const room = await db
+    .prepare('SELECT id, gm_user_id FROM rooms WHERE id = ?')
+    .bind(roomId)
+    .first<{ id: string; gm_user_id: string }>();
+
+  if (!room) {
+    return c.json({ error: '房间不存在' }, 404);
+  }
+
+  // 权限：房间创建者或 role='gm' 的成员
+  let isGm = room.gm_user_id === userId;
+  if (!isGm) {
+    const member = await db
+      .prepare('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ? AND role = ?')
+      .bind(roomId, userId, 'gm')
+      .first();
+    isGm = !!member;
+  }
+
+  if (!isGm) {
+    return c.json({ error: '只有 GM 可以销毁房间' }, 403);
+  }
+
+  const result = await archiveAndDeleteRoom(db, roomId, {
+    archivedBy: userId,
+    reason: 'manual',
+  });
+
+  if (!result) {
+    return c.json({ error: '房间不存在' }, 404);
+  }
+
+  return c.json({
+    success: true,
+    archiveId: result.archiveId,
+    memberCount: result.memberCount,
+    logCount: result.logCount,
+  });
 });
 
 // GET /:code/resource-logs - 获取房间资源日志

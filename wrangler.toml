@@ -23,3 +23,6 @@ new_sqlite_classes = ["RoomDurableObject"]
 
 [assets]
 directory = "./src/public"
+
+[triggers]
+crons = ["0 20 * * *"]

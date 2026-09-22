@@ -180,7 +180,14 @@ export class RoomDurableObject extends DurableObject<Env> {
           break;
         default:
           this.send(ws, { type: 'error', message: `未知的消息类型: ${msg.type}` });
+          return;
       }
+
+      // 更新房间活跃时间
+      db.prepare("UPDATE rooms SET last_active_at = datetime('now') WHERE id = ?")
+        .bind(this.roomId)
+        .run()
+        .catch((e) => console.error('更新 last_active_at 失败:', e));
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : '操作失败';
       this.send(ws, { type: 'error', message: errorMessage });
