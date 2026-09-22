@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
 import { Bindings, Variables } from '../types';
+import { strLen } from '../utils/validate';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -158,6 +159,8 @@ route.post('/:characterId', async (c) => {
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
     return c.json({ error: '物品名称不能为空' }, 400);
   }
+  if (!strLen(body.name, 30)) return c.json({ error: '物品名称不能超过 30 字符' }, 400);
+  if (!strLen(body.description, 300)) return c.json({ error: '物品描述不能超过 300 字符' }, 400);
 
   // 校验编辑权限
   const hasPermission = await checkInventoryPermission(db, characterId, userId);
@@ -180,6 +183,36 @@ route.post('/:characterId', async (c) => {
     name: body.name.trim(),
     description: body.description?.trim() || '',
   }, 201);
+});
+
+// PUT /:characterId/reorder - 重新排序背包物品（必须在 /:characterId/:itemId 之前注册）
+route.put('/:characterId/reorder', async (c) => {
+  const characterId = c.req.param('characterId');
+  const userId = c.get('userId');
+  const db = c.env.DB;
+  const body = await c.req.json<{ itemIds?: string[] }>();
+
+  if (!body.itemIds || !Array.isArray(body.itemIds) || body.itemIds.length === 0) {
+    return c.json({ error: '请提供物品ID列表' }, 400);
+  }
+
+  // 校验编辑权限
+  const hasPermission = await checkInventoryPermission(db, characterId, userId);
+  if (!hasPermission) {
+    return c.json({ error: '无权编辑该角色的背包' }, 403);
+  }
+
+  for (let i = 0; i < body.itemIds.length; i++) {
+    await db
+      .prepare('UPDATE inventory_items SET sort_order = ? WHERE id = ? AND character_id = ?')
+      .bind(i, body.itemIds[i], characterId)
+      .run();
+  }
+
+  // 通知房间更新
+  await notifyRoomUpdate(c.env, db, characterId);
+
+  return c.json({ success: true });
 });
 
 // PUT /:characterId/:itemId - 更新背包物品
@@ -214,10 +247,12 @@ route.put('/:characterId/:itemId', async (c) => {
     if (!trimmed) {
       return c.json({ error: '物品名称不能为空' }, 400);
     }
+    if (!strLen(trimmed, 30)) return c.json({ error: '物品名称不能超过 30 字符' }, 400);
     fields.push('name = ?');
     values.push(trimmed);
   }
   if (body.description !== undefined) {
+    if (!strLen(body.description, 300)) return c.json({ error: '物品描述不能超过 300 字符' }, 400);
     fields.push('description = ?');
     values.push(body.description.trim());
   }
@@ -274,36 +309,6 @@ route.delete('/:characterId/:itemId', async (c) => {
   }
 
   await db.prepare('DELETE FROM inventory_items WHERE id = ?').bind(itemId).run();
-
-  // 通知房间更新
-  await notifyRoomUpdate(c.env, db, characterId);
-
-  return c.json({ success: true });
-});
-
-// PUT /:characterId/reorder - 重新排序背包物品
-route.put('/:characterId/reorder', async (c) => {
-  const characterId = c.req.param('characterId');
-  const userId = c.get('userId');
-  const db = c.env.DB;
-  const body = await c.req.json<{ itemIds?: string[] }>();
-
-  if (!body.itemIds || !Array.isArray(body.itemIds) || body.itemIds.length === 0) {
-    return c.json({ error: '请提供物品ID列表' }, 400);
-  }
-
-  // 校验编辑权限
-  const hasPermission = await checkInventoryPermission(db, characterId, userId);
-  if (!hasPermission) {
-    return c.json({ error: '无权编辑该角色的背包' }, 403);
-  }
-
-  for (let i = 0; i < body.itemIds.length; i++) {
-    await db
-      .prepare('UPDATE inventory_items SET sort_order = ? WHERE id = ? AND character_id = ?')
-      .bind(i, body.itemIds[i], characterId)
-      .run();
-  }
 
   // 通知房间更新
   await notifyRoomUpdate(c.env, db, characterId);

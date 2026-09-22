@@ -14,6 +14,17 @@ import { archiveAndDeleteRoom } from './api/archives';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+app.onError((err, c) => {
+  if (
+    err instanceof SyntaxError ||
+    /JSON|Unexpected token/i.test(err.message)
+  ) {
+    return c.json({ error: '请求体不是合法的 JSON' }, 400);
+  }
+  console.error('[error] %s %s', c.req.method, c.req.path, err);
+  return c.json({ error: '服务器内部错误' }, 500);
+});
+
 app.use('*', cors());
 
 // API 路由
