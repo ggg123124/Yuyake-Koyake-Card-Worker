@@ -426,6 +426,7 @@ route.delete('/:code', authMiddleware, async (c) => {
   return c.json({
     success: true,
     archiveId: result.archiveId,
+    transcriptCount: result.transcriptCount,
     memberCount: result.memberCount,
     logCount: result.logCount,
   });
