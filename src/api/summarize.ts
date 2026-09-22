@@ -203,21 +203,20 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   // 时会各自算出 now-120s 的首次窗口（起点差几毫秒，唯一索引 (room_id,start_ms) 挡不住），
   // 结果生成两条覆盖同一时段的摘要（实测 ZTMNSOC 出现窗口相差 2 秒的两条）。
   // 故落库前复查：若已存在 end_ms 晚于本窗口起点的摘要，说明窗口已被抢先占用，放弃。
-  const raced = await db
-    .prepare('SELECT id FROM room_summaries WHERE room_id = ? AND end_ms > ? ORDER BY end_ms DESC LIMIT 1')
-    .bind(roomId, startMs)
-    .first<{ id: string }>();
-  if (raced) {
-    console.info(`[summary] 跳过：窗口已被并发请求占用 room=${roomId} startMs=${startMs} 已有 end_ms>startMs`);
-    return { ok: true, skipped: 'concurrent-window' as const };
-  }
-
   const id = crypto.randomUUID();
+  // 原子化并发防护：把「检查窗口是否已被占用」和「写入」合并进同一条 SQL。
+  // 此前是 SELECT 复查 + INSERT 两步，两个并发请求会同时读到「无占用」而双双写入（TOCTOU）。
+  // 该缺陷真实发生过：4 会话并发上传的房间 ZTPKP8C 产生了重叠窗口（全库扫描查得）。
+  // D1 的单条语句是原子的，故用 INSERT ... SELECT ... WHERE NOT EXISTS 一步完成；
+  // 同时保留 OR IGNORE 兜底唯一索引 (room_id, start_ms) 的冲突。
   const ins = await db
     .prepare(
       `INSERT OR IGNORE INTO room_summaries
          (id, room_id, start_ms, end_ms, summary, model, source_segments, source_logs, token_usage, latency_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM room_summaries WHERE room_id = ? AND end_ms > ?
+        )`
     )
     .bind(
       id,
@@ -229,14 +228,16 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
       segs.length,
       logs.length,
       JSON.stringify(o.usage ?? null),
-      latencyMs
+      latencyMs,
+      roomId,
+      startMs
     )
     .run();
 
-  // 被唯一索引挡下 = 另一路并发已经写了同一窗口
-  if ((ins.meta?.changes ?? 0) === 0) {
-    console.info(`[summary] skip room=${roomId} reason=window-taken start=${startMs}（并发已写入）`);
-    return { ok: true, skipped: 'window-taken' };
+  // changes=0 = 窗口已被并发请求占用（或撞上唯一索引）
+  if (!ins.meta?.changes) {
+    console.info(`[summary] 跳过：窗口已被并发请求占用 room=${roomId} startMs=${startMs}`);
+    return { ok: true, skipped: 'concurrent-window' as const };
   }
 
   console.info(
