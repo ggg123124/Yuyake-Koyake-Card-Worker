@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth';
 import { verifyToken } from '../utils/auth';
 import { Bindings, Variables } from '../types';
 import { archiveAndDeleteRoom } from './archives';
+import { validRoomCode, strLen } from '../utils/validate';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -23,6 +24,14 @@ route.post('/', authMiddleware, async (c) => {
 
   if (!id || typeof id !== 'string') {
     return c.json({ error: '房间代码不能为空' }, 400);
+  }
+
+  if (!validRoomCode(id)) {
+    return c.json({ error: '房间码必须是 4-12 位大写字母或数字' }, 400);
+  }
+
+  if (name !== undefined && !strLen(name, 50)) {
+    return c.json({ error: '房间名不能超过 50 字符' }, 400);
   }
 
   const db = c.env.DB;
@@ -394,15 +403,12 @@ route.delete('/:code', authMiddleware, async (c) => {
     return c.json({ error: '房间不存在' }, 404);
   }
 
-  // 权限：房间创建者或 role='gm' 的成员
-  let isGm = room.gm_user_id === userId;
-  if (!isGm) {
-    const member = await db
-      .prepare('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ? AND role = ?')
-      .bind(roomId, userId, 'gm')
-      .first();
-    isGm = !!member;
-  }
+  // 权限：只看 room_members.role === 'gm'
+  const member = await db
+    .prepare('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ? AND role = ?')
+    .bind(roomId, userId, 'gm')
+    .first();
+  const isGm = !!member;
 
   if (!isGm) {
     return c.json({ error: '只有 GM 可以销毁房间' }, 403);

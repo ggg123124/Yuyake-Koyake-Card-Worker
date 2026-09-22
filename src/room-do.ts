@@ -557,10 +557,20 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (!isGM) throw new Error('只有 GM 可以调整成员角色');
 
     const targetMember = await db
-      .prepare('SELECT character_id FROM room_members WHERE room_id = ? AND character_id = ?')
+      .prepare('SELECT character_id, role FROM room_members WHERE room_id = ? AND character_id = ?')
       .bind(this.roomId, characterId)
-      .first();
+      .first<{ character_id: string; role: string }>();
     if (!targetMember) throw new Error('该角色不在此房间中');
+
+    if (targetMember.role === 'gm' && role !== 'gm') {
+      const gmCount = await db
+        .prepare('SELECT COUNT(*) as cnt FROM room_members WHERE room_id = ? AND role = ?')
+        .bind(this.roomId, 'gm')
+        .first<{ cnt: number }>();
+      if (gmCount && gmCount.cnt <= 1) {
+        throw new Error('房间至少需要保留一个GM，无法降级');
+      }
+    }
 
     await db
       .prepare('UPDATE room_members SET role = ? WHERE room_id = ? AND character_id = ?')
@@ -581,14 +591,6 @@ export class RoomDurableObject extends DurableObject<Env> {
   // ==================== 辅助方法 ====================
 
   private async checkGM(db: D1Database, userId: string): Promise<boolean> {
-    // 检查 rooms.gm_user_id（房间创建者）
-    const room = await db
-      .prepare('SELECT gm_user_id FROM rooms WHERE id = ?')
-      .bind(this.roomId)
-      .first<{ gm_user_id: string }>();
-    if (room && room.gm_user_id === userId) return true;
-
-    // 检查 room_members 表中是否有 role='gm'
     const member = await db
       .prepare('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ? AND role = ?')
       .bind(this.roomId, userId, 'gm')

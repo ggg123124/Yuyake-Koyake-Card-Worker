@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
 import { Bindings, Variables } from '../types';
 import { handleBondUpgrade } from '../api/calculate';
+import { clampInt, strLen } from '../utils/validate';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -65,6 +66,9 @@ route.post('/', async (c) => {
     return c.json({ error: '牵绊类型不能为空' }, 400);
   }
 
+  if (!strLen(body.bondType, 20)) return c.json({ error: '牵绊类型不能超过 20 字符' }, 400);
+  if (!strLen(body.toCharacterName, 50)) return c.json({ error: '目标角色名不能超过 50 字符' }, 400);
+
   const db = c.env.DB;
 
   // 校验 fromCharacterId 属于当前用户
@@ -80,7 +84,7 @@ route.post('/', async (c) => {
     return c.json({ error: '无权操作该角色的牵绊' }, 403);
   }
 
-  const bondLevel = body.bondLevel ?? 1;
+  const bondLevel = clampInt(body.bondLevel, { min: 1, max: 5, def: 1 });
   const isIntense = body.isIntense ? 1 : 0;
 
   // 检查是否已存在相同 from+room+toName 的牵绊
@@ -227,6 +231,8 @@ route.post('/incoming', async (c) => {
     return c.json({ error: '牵绊类型不能为空' }, 400);
   }
 
+  if (!strLen(body.bondType, 20)) return c.json({ error: '牵绊类型不能超过 20 字符' }, 400);
+
   const db = c.env.DB;
 
   // 校验 toCharacterId 属于当前用户
@@ -255,7 +261,7 @@ route.post('/incoming', async (c) => {
     return c.json({ error: '来源角色名不能为空' }, 400);
   }
 
-  const bondLevel = body.bondLevel ?? 1;
+  const bondLevel = clampInt(body.bondLevel, { min: 1, max: 5, def: 1 });
   const isIntense = body.isIntense ? 1 : 0;
 
   // 检查是否已存在相同 from+room+to 的牵绊
@@ -475,6 +481,9 @@ route.put('/:id', async (c) => {
     return c.json({ error: '无权编辑此牵绊' }, 403);
   }
 
+  if (body.bondType !== undefined && !strLen(body.bondType, 20)) return c.json({ error: '牵绊类型不能超过 20 字符' }, 400);
+  if (body.toCharacterName !== undefined && !strLen(body.toCharacterName, 50)) return c.json({ error: '目标角色名不能超过 50 字符' }, 400);
+
   const updates: string[] = [];
   const params: unknown[] = [];
 
@@ -484,7 +493,7 @@ route.put('/:id', async (c) => {
   }
   if (body.bondLevel !== undefined) {
     updates.push('bond_level = ?');
-    params.push(body.bondLevel);
+    params.push(clampInt(body.bondLevel, { min: 1, max: 5, def: 1 }));
   }
   if (body.toCharacterName !== undefined) {
     updates.push('to_character_name = ?');

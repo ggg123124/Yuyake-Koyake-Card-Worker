@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { hashPassword, verifyPassword, generateToken } from '../utils/auth';
 import { authMiddleware } from '../middleware/auth';
 import { Bindings, Variables } from '../types';
+import { validUsername } from '../utils/validate';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -23,9 +24,8 @@ route.post('/register', async (c) => {
     return c.json({ error: '密码不能为空' }, 400);
   }
 
-  // 验证用户名长度
-  if (username.length < 3 || username.length > 20) {
-    return c.json({ error: '用户名长度必须在 3-20 字符之间' }, 400);
+  if (!validUsername(username)) {
+    return c.json({ error: '用户名只能包含字母、数字、下划线或连字符，长度 3-20' }, 400);
   }
 
   // 验证密码长度
