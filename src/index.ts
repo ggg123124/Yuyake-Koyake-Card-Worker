@@ -12,6 +12,7 @@ import transcriptRoute from './api/transcript';
 import { Bindings } from './types';
 import { RoomDurableObject } from './room-do';
 import { archiveAndDeleteRoom } from './api/archives';
+import { maybeSummarize } from './api/summarize';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -71,11 +72,49 @@ async function handleScheduled(env: Bindings): Promise<void> {
   }
 }
 
+// 每分钟兜底：为最近有转写活动的房间生成摘要。
+// 为什么不只靠请求内的 waitUntil：实测转写上传响应返回后，后台任务存在被回收而丢失的情况
+// （同一房间、同样素材，一次成功一次没生成）。定时任务不依赖任何浏览器或前台请求的生命周期。
+async function sweepSummaries(env: Bindings) {
+  const since = Date.now() - 10 * 60 * 1000; // 最近 10 分钟内有转写的房间
+  const rows = await env.DB.prepare(
+    `SELECT DISTINCT room_id FROM transcript_segments WHERE abs_start_ms >= ? LIMIT 50`
+  )
+    .bind(since)
+    .all<{ room_id: string }>();
+
+  const rooms = rows.results || [];
+  if (!rooms.length) return;
+
+  for (const r of rooms) {
+    try {
+      const res = await maybeSummarize(env, r.room_id);
+      if (res.ok && !res.skipped) {
+        console.info(
+          `[summary] sweep room=${r.room_id} segs=${res.segments} logs=${res.logs} latency=${res.latencyMs}ms`
+        );
+      } else if (!res.ok) {
+        console.warn(`[summary] sweep-failed room=${r.room_id} err=${res.error}`);
+      }
+    } catch (e) {
+      console.warn(
+        `[summary] sweep-error room=${r.room_id} err=${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+}
+
 export { RoomDurableObject };
 
 export default {
   fetch: app.fetch.bind(app),
   scheduled: (event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => {
-    ctx.waitUntil(handleScheduled(env));
+    // 每天 20:00 UTC：清理超期且无成员的房间（先归档再删除）
+    if (event.cron === '0 20 * * *') {
+      ctx.waitUntil(handleScheduled(env));
+      return;
+    }
+    // 其余（每分钟）：兜底补摘要
+    ctx.waitUntil(sweepSummaries(env));
   },
 };

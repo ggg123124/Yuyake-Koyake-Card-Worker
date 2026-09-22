@@ -1,10 +1,20 @@
 import { Bindings } from '../types';
 
 // 按时间窗把「语音转写 + 游戏操作」汇总成一条人可读的事件摘要。
-// 模型选型实测：llama-3.3-70b-instruct-fp8-fast 4.5s / 中文总结质量最好；
-// 候选中的 llama-3.1-8b（2026-05-30）与 qwen1.5-14b（2025-10-01）均已弃用，gemma-3-12b 无权限。
+//
+// 模型选型为实测所得（数据来自真实跑团素材，neurons 为官方计费单位，$0.011/1000）：
+//   mistral-small-3.1-24b  128K ctx  17.5 neurons  2213ms  ← 选用：输出含资源数值，非 reasoning，稳定
+//   llama-4-scout-17b      131K ctx  11.9 neurons  1690ms  更便宜更快，但偏简略
+//   llama-3.2-3b            80K ctx   5.0 neurons  1631ms  最便宜，但两次实测结果差异很大（不稳定）
+//   llama-3.2-1b            60K ctx   2.0 neurons  1770ms  不可用：会把判定和资源张冠李戴
+//   llama-3.3-70b           24K ctx  31.8 neurons  3495ms  质量最好但最贵，且上下文最小（原选）
+//   qwen3-30b-a3b /
+//   gemma-4-26b-a4b         —— 属 reasoning 模型，思考会吃满 token 致 response 为空，一律排除
+//
+// 成本参考：一场 2 小时团约 60 次汇总 ≈ 1050 neurons ≈ ¥0.08，
+// 远低于每日 10,000 neurons 的免费额度，故不为省钱牺牲质量。
 
-const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+const MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const WINDOW_MS = 120_000; // 约 2 分钟一个窗口
 const MIN_SEGMENTS = 2; // 素材太少不值得调模型
 const MAX_SEGMENTS = 300;
@@ -172,8 +182,14 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   }
   const latencyMs = Date.now() - t0;
 
-  const o = (out ?? {}) as { response?: unknown; usage?: unknown };
-  const summary = cleanSummary(String(o.response ?? ''));
+  const o = (out ?? {}) as {
+    response?: unknown;
+    usage?: unknown;
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  // 输出格式因模型而异：多数是 {response}，部分走 OpenAI 兼容的 {choices[0].message.content}
+  const raw = o.response ?? o.choices?.[0]?.message?.content ?? '';
+  const summary = cleanSummary(String(raw));
   if (!summary) {
     console.warn(`[summary] empty-summary room=${roomId} latency=${latencyMs}ms`);
     return { ok: false, error: 'empty-summary' };
