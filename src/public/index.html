@@ -221,6 +221,7 @@ tr.drag-over-bottom{box-shadow:0 3px 0 0 var(--primary) inset}
       <span id="room-code" class="tag"></span>
       <span id="room-phase" class="phase-badge"></span>
       <button class="topbar-btn" onclick="copyRoomLink()" id="btn-copy-link" title="复制房间链接">复制链接</button>
+      <button class="topbar-btn" onclick="openTranscript()" id="btn-transcript" title="实时对话记录（语音转文字）">🎙 对话</button>
       <button class="topbar-btn" onclick="refreshAllData()" id="btn-refresh" title="刷新所有数据">🔄 刷新</button>
       <button class="btn btn-danger btn-sm hidden" onclick="leaveRoom()" id="btn-gm-leave">离开房间</button>
     </div>
@@ -383,6 +384,7 @@ function switchTab(t){document.querySelectorAll('.tab-btn').forEach((b,i)=>b.cla
 async function doLogin(){const u=document.getElementById('login-user').value.trim(),p=document.getElementById('login-pass').value;if(!u||!p){toast('请输入用户名和密码','error');return;}try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:u,password:p})});token=r.token;localStorage.setItem('token',token);user=r.user;showLobby();}catch(e){toast(e.message,'error');}}
 async function doRegister(){const u=document.getElementById('reg-user').value.trim(),p=document.getElementById('reg-pass').value,n=document.getElementById('reg-name').value.trim();if(!u||!p){toast('请输入用户名和密码','error');return;}try{const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({username:u,password:p,displayName:n||u})});token=r.token;localStorage.setItem('token',token);user=r.user;showLobby();}catch(e){toast(e.message,'error');}}
 function doLogout(){token=null;localStorage.removeItem('token');user=null;showView('login');}
+function openTranscript(){if(!room)return;window.open('/transcript.html?room='+encodeURIComponent(room.id),'_blank');}
 
 async function showLobby(){try{user=await api('/api/auth/me');}catch(e){token=null;localStorage.removeItem('token');showView('login');return;}document.getElementById('lobby-user').textContent='欢迎，'+user.displayName;showView('lobby');renderMyRooms();renderArchives();const pendingRoom=localStorage.getItem('pendingRoom');if(pendingRoom){localStorage.removeItem('pendingRoom');await pickCharacterAndJoin(pendingRoom);}}
 

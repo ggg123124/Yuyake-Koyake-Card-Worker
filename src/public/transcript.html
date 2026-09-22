@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>夕妖晚谣 · 实时对话记录</title>
+<style>
+  :root{--primary:#E67E22;--primary-dark:#D35400;--bg:#FFF8F0;--card:#fff;--text:#333;--danger:#c0392b;--ok:#27ae60;--muted:#999}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.6;min-height:100vh}
+  .wrap{max-width:1200px;margin:0 auto;padding:14px}
+  .topbar{background:var(--primary);color:#fff;padding:14px 16px;border-radius:12px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+  .topbar b{font-size:17px}
+  .badge{background:rgba(255,255,255,.22);padding:3px 10px;border-radius:20px;font-size:13px}
+  .card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  button{font:inherit;min-height:46px;padding:10px 20px;border-radius:8px;border:none;cursor:pointer;background:var(--primary);color:#fff;font-weight:600;transition:background .15s}
+  button:hover{background:var(--primary-dark)}
+  button.danger{background:var(--danger)}
+  button.ghost{background:#eee;color:#333}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
+  .dot.live{background:var(--ok);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .muted{color:var(--muted);font-size:13px}
+  #log{max-height:62vh;overflow-y:auto;padding:4px 2px}
+  .line{padding:7px 10px;border-radius:8px;margin-bottom:6px;background:#fafafa;display:flex;gap:10px;align-items:baseline}
+  .line .t{color:var(--muted);font-size:12px;flex:0 0 62px;font-variant-numeric:tabular-nums}
+  .line .who{font-weight:700;flex:0 0 auto;color:var(--primary-dark)}
+  .line .txt{flex:1;word-break:break-word}
+  .line.mine{background:#FFF3E6}
+  .line.sys{background:#f0f7ff;color:#555}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  @media(min-width:1024px){.grid2{grid-template-columns:2fr 1fr}}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px}
+  .kv span:last-child{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div><b>🎙 实时对话记录</b> <span class="badge" id="room-code">-</span></div>
+    <div class="muted" id="whoami">-</div>
+  </div>
+
+  <div id="msg" class="card" style="display:none"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <div><span class="dot" id="dot"></span><b id="state">未开始</b></div>
+        <div class="row">
+          <button id="btn-start">🎙 开始记录</button>
+          <button id="btn-stop" class="danger" disabled>⏹ 停止</button>
+        </div>
+      </div>
+      <div id="log"></div>
+      <div class="muted" id="hint" style="margin-top:8px">点「开始记录」后，你的麦克风会每 30 秒切片上传一次，转写结果实时同步给房间里所有人。</div>
+    </div>
+
+    <div class="card">
+      <b>运行状态</b>
+      <div style="margin-top:10px">
+        <div class="kv"><span>已上传片段</span><span id="st-chunks">0</span></div>
+        <div class="kv"><span>已转写句数</span><span id="st-segs">0</span></div>
+        <div class="kv"><span>最近一次耗时</span><span id="st-ai">-</span></div>
+        <div class="kv"><span>待上传缓冲</span><span id="st-buf">0.0s</span></div>
+        <div class="kv"><span>时钟偏移</span><span id="st-offset">-</span></div>
+        <div class="kv"><span>连接状态</span><span id="st-ws">-</span></div>
+      </div>
+      <div style="margin-top:12px" class="muted">
+        词表（提升专名/黑话识别，GM 可在主站维护）：<br>
+        <span id="prompt" style="font-size:12px"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SAMPLE_RATE = 16000;
+const CHUNK_SECONDS = 30;
+const $ = (id) => document.getElementById(id);
+
+const params = new URLSearchParams(location.search);
+const roomCode = (params.get('room') || '').trim();
+const token = localStorage.getItem('token') || '';
+
+let audioCtx = null, sourceNode = null, processorNode = null, mediaStream = null;
+let chunks = [];            // Float32 累积缓冲
+let buffered = 0;           // 已缓冲采样数
+let uploadedSamples = 0;    // 已上传采样数（用于算 startMs）
+let chunkSeq = 0;
+let sessionId = null;
+let ws = null;
+let myCharId = '';
+let myName = '';
+let segCount = 0;
+let uploadBusy = false;
+let uploadTimer = null;
+
+function showMsg(text, kind) {
+  const el = $('msg');
+  el.style.display = 'block';
+  el.style.background = kind === 'error' ? '#fdecea' : '#eef7ee';
+  el.innerHTML = text;
+}
+function setState(text, live) {
+  $('state').textContent = text;
+  $('dot').className = 'dot' + (live ? ' live' : '');
+}
+function line(t, who, text, mine) {
+  const d = document.createElement('div');
+  d.className = 'line' + (mine ? ' mine' : '');
+  d.innerHTML = `<span class="t">${t}</span><span class="who">${who}</span><span class="txt"></span>`;
+  d.querySelector('.txt').textContent = text;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function hhmmss(ts) {
+  const d = new Date(ts);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { Authorization: 'Bearer ' + token, ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    let m = res.status + '';
+    try { const j = await res.json(); m = j.error || m; } catch {}
+    throw new Error(m);
+  }
+  return res.json();
+}
+
+// ---- WAV 编码（16kHz / 单声道 / 16bit） ----
+function encodeWav(float32) {
+  const buf = new ArrayBuffer(44 + float32.length * 2);
+  const v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + float32.length * 2, true); w(8, 'WAVE');
+  w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, SAMPLE_RATE, true); v.setUint32(28, SAMPLE_RATE * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, float32.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < float32.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+function drainBuffer() {
+  const total = chunks.reduce((a, b) => a + b.length, 0);
+  const merged = new Float32Array(total);
+  let off = 0;
+  for (const c of chunks) { merged.set(c, off); off += c.length; }
+  chunks = [];
+  return merged;
+}
+
+async function flushChunk(force) {
+  if (!sessionId || uploadBusy) return;
+  const needSamples = CHUNK_SECONDS * SAMPLE_RATE;
+  if (!force && buffered < needSamples) { $('st-buf').textContent = (buffered / SAMPLE_RATE).toFixed(1) + 's'; return; }
+  if (buffered < SAMPLE_RATE) { $('st-buf').textContent = (buffered / SAMPLE_RATE).toFixed(1) + 's'; return; }
+
+  const pcm = drainBuffer();
+  const startMs = Math.round((uploadedSamples / SAMPLE_RATE) * 1000);
+  const seq = chunkSeq++;
+  buffered = 0;
+  uploadBusy = true;
+  $('st-buf').textContent = '0.0s';
+
+  try {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/chunk?sessionId=${encodeURIComponent(sessionId)}&chunkSeq=${seq}&startMs=${startMs}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'audio/wav' },
+      body: encodeWav(pcm),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.status);
+    uploadedSamples += pcm.length;
+    $('st-chunks').textContent = String(Number($('st-chunks').textContent) + 1);
+    $('st-ai').textContent = (data.aiMs || 0) + 'ms';
+    (data.segments || []).forEach((s) => {
+      line(hhmmss(Date.now()), myName + '（我）', s.text, true);
+      segCount++;
+    });
+    $('st-segs').textContent = String(segCount);
+  } catch (e) {
+    // 失败不丢数据：把这段塞回缓冲头部，下一轮重试
+    chunks.unshift(pcm);
+    buffered += pcm.length;
+    chunkSeq = seq; // 序号回退，避免空洞
+    line(hhmmss(Date.now()), '系统', '上传失败，将在下一片重试：' + e.message, false);
+  } finally {
+    uploadBusy = false;
+  }
+}
+
+function connectWs() {
+  if (!myCharId) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/api/rooms/${encodeURIComponent(roomCode)}/ws?token=${encodeURIComponent(token)}&characterId=${encodeURIComponent(myCharId)}`;
+  ws = new WebSocket(url);
+  ws.onopen = () => { $('st-ws').textContent = '已连接'; };
+  ws.onclose = () => { $('st-ws').textContent = '已断开（3秒后重连）'; setTimeout(connectWs, 3000); };
+  ws.onerror = () => { $('st-ws').textContent = '连接异常'; };
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === 'transcript-update') {
+      const who = m.speaker || '他人';
+      (m.segments || []).forEach((s) => {
+        // 自己的转写已本地显示过，避免重复
+        if (who === myName) return;
+        const ts = s.startMs || s.endMs || Date.now();
+        line(hhmmss(ts), who, s.text, false);
+      });
+    }
+  };
+}
+
+async function start() {
+  $('msg').style.display = 'none';
+  if (!roomCode) return showMsg('URL 里缺少 room 参数，请从房间页进入。', 'error');
+  if (!token) return showMsg('未登录：请先回主站登录。', 'error');
+
+  setState('准备中…', false);
+  try {
+    // 身份 & 房间校验
+    const me = await api('/api/auth/me');
+    const room = await api('/api/rooms/' + encodeURIComponent(roomCode));
+    const mine = (room.members || []).find((m) => m.userId === me.id);
+    if (!mine) { setState('未开始', false); return showMsg('你不在这个房间里，无法开始记录。', 'error'); }
+    myCharId = mine.characterId;
+    myName = (mine.character && mine.character.name) || me.displayName || me.username;
+    $('room-code').textContent = roomCode;
+    $('whoami').textContent = `我：${myName}`;
+
+    // 麦克风
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    processorNode.onaudioprocess = (e) => {
+      const d = new Float32Array(e.inputBuffer.getChannelData(0)); // 拷贝（缓冲会被复用）
+      chunks.push(d);
+      buffered += d.length;
+      $('st-buf').textContent = (buffered / SAMPLE_RATE).toFixed(1) + 's';
+    };
+    sourceNode.connect(processorNode);
+    processorNode.connect(audioCtx.destination);
+
+    // 开 session（含对时 + 词表）
+    const sess = await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientTs: Date.now(), deviceLabel: (mediaStream.getAudioTracks()[0] || {}).label || '' }),
+    });
+    sessionId = sess.sessionId;
+    $('st-offset').textContent = (sess.offsetMs >= 0 ? '+' : '') + sess.offsetMs + 'ms';
+    $('prompt').textContent = sess.prompt || '(无)';
+
+    connectWs();
+    uploadTimer = setInterval(() => flushChunk(false), 3000);
+
+    $('btn-start').disabled = true;
+    $('btn-stop').disabled = false;
+    setState('记录中（每 30 秒切片上传）', true);
+    line(hhmmss(Date.now()), '系统', `已开始记录，使用模型 ${sess.model}`, false);
+  } catch (e) {
+    setState('未开始', false);
+    showMsg('启动失败：' + e.message, 'error');
+  }
+}
+
+async function stop() {
+  setState('正在收尾…', false);
+  try {
+    if (uploadTimer) { clearInterval(uploadTimer); uploadTimer = null; }
+    await flushChunk(true); // 把剩余缓冲也上传
+    if (sessionId) await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/session/${encodeURIComponent(sessionId)}/stop`, { method: 'POST' });
+  } catch (e) {
+    line(hhmmss(Date.now()), '系统', '收尾时出错：' + e.message, false);
+  } finally {
+    if (processorNode) { processorNode.disconnect(); processorNode.onaudioprocess = null; }
+    if (sourceNode) sourceNode.disconnect();
+    if (audioCtx) { try { await audioCtx.close(); } catch {} }
+    if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+    audioCtx = sourceNode = processorNode = mediaStream = null;
+    if (ws) { try { ws.onclose = null; ws.close(); } catch {} ws = null; }
+    $('btn-start').disabled = false;
+    $('btn-stop').disabled = true;
+    setState('已停止', false);
+    $('st-ws').textContent = '已断开';
+    line(hhmmss(Date.now()), '系统', '已停止记录', false);
+  }
+}
+
+// 加载历史（重进页面时回显已转写内容）
+(async () => {
+  if (!roomCode || !token) return;
+  try {
+    const d = await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript`);
+    (d.segments || []).forEach((s) => line(hhmmss(s.startMs), s.speaker, s.text, false));
+    $('st-segs').textContent = String((d.segments || []).length);
+    segCount = (d.segments || []).length;
+  } catch (e) { /* 未加入房间等情况静默跳过 */ }
+})();
+
+$('room-code').textContent = roomCode || '(缺少 room 参数)';
+$('btn-start').onclick = start;
+$('btn-stop').onclick = stop;
+window.addEventListener('beforeunload', () => { if (sessionId) flushChunk(true); });
+</script>
+</body>
+</html>

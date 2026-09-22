@@ -69,6 +69,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
 
+    // RPC 调用：广播实时对话转写结果
+    if (url.pathname.endsWith('/broadcast-transcript')) {
+      const body = (await request.json().catch(() => ({}))) as { segments?: unknown[]; speaker?: string | null };
+      await this.broadcastTranscriptUpdate(body);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 
@@ -742,6 +751,27 @@ export class RoomDurableObject extends DurableObject<Env> {
     for (const [ws] of this.sessions) {
       this.send(ws, message);
     }
+  }
+
+  // 实时对话转写：每位玩家的浏览器各自切片上传，转写完成后立刻广播给房间内所有连接
+  async broadcastTranscriptUpdate(payload: { segments?: unknown[]; speaker?: string | null }) {
+    const message: WSResponse = {
+      type: 'transcript-update',
+      speaker: payload.speaker ?? null,
+      segments: payload.segments ?? [],
+    };
+    let ok = 0;
+    for (const [ws] of this.sessions) {
+      try {
+        this.send(ws, message);
+        ok++;
+      } catch (e) {
+        console.warn('[do] transcript broadcast failed for a socket:', e);
+      }
+    }
+    console.info(
+      `[do] transcript-update room=${this.roomId} segs=${(payload.segments || []).length} sent=${ok}`
+    );
   }
 
   async broadcastBondsUpdate(changedCharacterId?: string) {

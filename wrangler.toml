@@ -24,5 +24,10 @@ new_sqlite_classes = ["RoomDurableObject"]
 [assets]
 directory = "./src/public"
 
+[ai]
+binding = "AI"
+# 本地 wrangler dev 下 AI binding 需标记 remote 才能实际调用（否则显示 not supported）
+remote = true
+
 [triggers]
 crons = ["0 20 * * *"]
