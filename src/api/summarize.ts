@@ -88,6 +88,10 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
 
   const startMs = last?.end_ms ?? now - WINDOW_MS;
   const endMs = now;
+  // 取素材时右边界留 30s 容差：上传有延迟，且客户端算出的片段起点可能贴近甚至略晚于 now
+  // （实测复现：瞬间上传 21s 音频时，第 2 片起点落 now 之后被排除 → 误判素材不足而跳过）。
+  // 注意入库的摘要仍记录真实的 endMs。
+  const segEndMs = endMs + 30_000;
 
   // ① 窗口内的语音转写
   const segRes = await db
@@ -96,7 +100,7 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
        WHERE room_id = ? AND abs_start_ms >= ? AND abs_start_ms < ?
        ORDER BY abs_start_ms ASC LIMIT ?`
     )
-    .bind(roomId, startMs, endMs, MAX_SEGMENTS)
+    .bind(roomId, startMs, segEndMs, MAX_SEGMENTS)
     .all<{ character_name: string | null; abs_start_ms: number; text: string }>();
   const segs = segRes.results || [];
 
@@ -110,7 +114,7 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
          AND rl.created_at <  datetime(?, 'unixepoch')
        ORDER BY rl.id ASC LIMIT ?`
     )
-    .bind(roomId, Math.floor(startMs / 1000), Math.floor(endMs / 1000), MAX_LOGS)
+    .bind(roomId, Math.floor(startMs / 1000), Math.floor(segEndMs / 1000), MAX_LOGS)
     .all<{ character_name: string | null; resource_type: string; change_amount: number; reason: string | null }>();
   const logs = logRes.results || [];
 
