@@ -196,13 +196,14 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
     : [];
   const fallbackText = typeof ai?.text === 'string' ? ai.text : '';
 
-  // 该客户端的绝对时间基准：会话创建时的服务器时间 + 该客户端时钟偏移
-  // 优先用毫秒精度的会话起点。started_at 是 SQLite datetime('now')，只有秒级精度，
-  // 实测导致 abs_start_ms 有 ~1.5s 偏差（DC-01 用例）；started_at_ms 为新增的毫秒列，
-  // 存量行由迁移按秒级时间回填（那批数据仍有 ≤1s 误差，新会话不受影响）。
-  const baseMs =
-    (sess.started_at_ms ?? Date.parse(sess.started_at.replace(' ', 'T') + 'Z')) +
-    (sess.client_offset_ms || 0);
+  // 绝对时间基准 = 会话创建时的服务器时间。
+  // 前端是在「点开始记录」时创建会话的，所以它约等于本机录音起点；
+  // 而 startMs 本身是相对本机录音起点的毫秒数 —— 合并时只需要「本机录音起点的
+  // 服务器绝对时间」，不需要客户端时钟参与。
+  // ⚠️ 曾经的写法是 (started_at_ms + client_offset_ms)，其中 offsetMs = serverTs - clientTs，
+  // 等于把客户端时钟偏差也算进绝对时间：客户端慢 5 分钟 → 这个人所有段落整体后移 5 分钟，
+  // 跨人时间线错乱（DC-02 用例实测偏移 5.42 分钟）。client_offset_ms 仅保留作诊断记录。
+  const baseMs = sess.started_at_ms ?? Date.parse(sess.started_at.replace(' ', 'T') + 'Z');
 
   // 幂等：同一片重传时先清旧记录
   await db
