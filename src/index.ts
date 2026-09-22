@@ -77,8 +77,13 @@ async function handleScheduled(env: Bindings): Promise<void> {
 // （同一房间、同样素材，一次成功一次没生成）。定时任务不依赖任何浏览器或前台请求的生命周期。
 async function sweepSummaries(env: Bindings) {
   const since = Date.now() - 10 * 60 * 1000; // 最近 10 分钟内有转写的房间
+  // JOIN rooms：房间销毁后其转写原始数据仍留在库中（内容已进归档快照），
+  // 若不限定房间仍存在，sweep 会对着已销毁房间反复生成摘要。
   const rows = await env.DB.prepare(
-    `SELECT DISTINCT room_id FROM transcript_segments WHERE abs_start_ms >= ? LIMIT 50`
+    `SELECT DISTINCT ts.room_id AS room_id
+     FROM transcript_segments ts
+     JOIN rooms r ON r.id = ts.room_id
+     WHERE ts.abs_start_ms >= ? LIMIT 50`
   )
     .bind(since)
     .all<{ room_id: string }>();
