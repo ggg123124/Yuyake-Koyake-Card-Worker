@@ -327,14 +327,41 @@ function processAudio(input, rate) {
   $('dot').className = 'dot' + (sessionId ? ' live' : '') + (talking ? ' talk' : '');
 }
 
+let wsRetry = 0;
 function connectWs() {
-  if (!myCharId) return;
+  if (!myCharId) {
+    // 不能静默：缺身份就不连，但必须留下痕迹，否则「别人说话看不到」无法排查
+    console.warn('[ws] 缺少角色身份，未建立连接');
+    $('st-ws').textContent = '未连接（缺少角色身份）';
+    return;
+  }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${proto}//${location.host}/api/rooms/${encodeURIComponent(roomCode)}/ws?token=${encodeURIComponent(token)}&characterId=${encodeURIComponent(myCharId)}`;
   ws = new WebSocket(url);
-  ws.onopen = () => { $('st-ws').textContent = '已连接'; };
-  ws.onclose = () => { $('st-ws').textContent = '已断开（3秒后重连）'; setTimeout(connectWs, 3000); };
-  ws.onerror = () => { $('st-ws').textContent = '连接异常'; };
+
+  // 卡在 CONNECTING 时主动放弃并重试（否则永远收不到他人转写且无任何提示）
+  const guard = setTimeout(() => {
+    if (ws && ws.readyState === WebSocket.CONNECTING) {
+      console.warn('[ws] 连接超时（8s 未建立），重试');
+      $('st-ws').textContent = '连接超时，重试中…';
+      try { ws.close(); } catch {}
+    }
+  }, 8000);
+
+  ws.onopen = () => {
+    clearTimeout(guard);
+    wsRetry = 0;
+    console.info('[ws] 已连接');
+    $('st-ws').textContent = '已连接';
+  };
+  ws.onclose = (e) => {
+    clearTimeout(guard);
+    if (e && e.code) console.warn(`[ws] 已断开 code=${e.code} reason=${e.reason || '(无)'}`);
+    wsRetry++;
+    $('st-ws').textContent = `已断开（第 ${wsRetry} 次重连中）`;
+    if (sessionId) setTimeout(connectWs, Math.min(3000 * wsRetry, 15000));
+  };
+  ws.onerror = () => { console.warn('[ws] 连接异常'); $('st-ws').textContent = '连接异常'; };
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === 'transcript-update') {
