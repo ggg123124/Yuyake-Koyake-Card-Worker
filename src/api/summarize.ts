@@ -19,9 +19,90 @@ const WINDOW_MS = 120_000; // 约 2 分钟一个窗口
 const MIN_SEGMENTS = 2; // 素材太少不值得调模型
 const MAX_SEGMENTS = 300;
 const MAX_LOGS = 80;
-const MAX_PROMPT_CHARS = 8000;
+export const MAX_PROMPT_CHARS = 8000;
+export const PREV_SUMMARY_COUNT = 3;
+export const PREV_SUMMARY_MAX_CHARS = 600;
+export const PREV_SUMMARY_LOOKBACK_MS = 600_000;
 
 const RES_LABEL: Record<string, string> = { dream: '梦点', feeling: '心意点', wonder: '奇迹点' };
+
+export interface PrevSummary {
+  startMs: number;
+  endMs: number;
+  summary: string;
+}
+
+export interface SummaryPromptInput {
+  secs: number;
+  playerNames: string[];
+  logs: Array<{ character_name: string | null; resource_type: string; change_amount: number; reason: string | null }>;
+  segs: Array<{ character_name: string | null; text: string }>;
+  prev: PrevSummary[];
+  windowStartMs: number;
+}
+
+// 把前情摘要格式化为 prompt 中的一段文本块。
+// prev 必须按时间正序（旧 → 新）。返回空串表示无前情。
+// 字数控制从最新往最旧累加：总长超上限就停，但最新那条永远保留。
+export function formatPrevBlock(prev: PrevSummary[], windowStartMs: number): string {
+  if (prev.length === 0) return '';
+
+  const lines: string[] = [];
+  let totalLen = 0;
+  // 从最新向最旧遍历，便于按累积字数截断
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const p = prev[i];
+    const gapSec = Math.round((windowStartMs - p.endMs) / 1000);
+    const label =
+      gapSec <= 5 ? '紧邻上一时段' : gapSec < 90 ? `约 ${gapSec} 秒前` : `约 ${Math.round(gapSec / 60)} 分钟前`;
+    const line = `- （${label}）${p.summary}`;
+    // 最新那条永远保留，即使它自己就超限
+    if (i < prev.length - 1 && totalLen + line.length > PREV_SUMMARY_MAX_CHARS) break;
+    lines.push(line);
+    totalLen += line.length;
+  }
+  // 输出恢复为时间正序（旧 → 新）
+  lines.reverse();
+  return lines.join('\n');
+}
+
+// 纯函数：根据素材和前情拼装完整 prompt。不碰 DB / AI，便于单测。
+export function buildSummaryPrompt(input: SummaryPromptInput): string {
+  const { secs, playerNames, logs, segs, prev, windowStartMs } = input;
+
+  const logBlock = logs.length
+    ? logs
+        .map(
+          (l) =>
+            `- ${l.character_name || '?'} ${RES_LABEL[l.resource_type] || l.resource_type} ${
+              l.change_amount > 0 ? '+' : ''
+            }${l.change_amount}${l.reason ? `（${l.reason}）` : ''}`
+        )
+        .join('\n')
+    : '（无）';
+  const segBlock = segs.map((s) => `- [${s.character_name || '未知'}] ${s.text}`).join('\n');
+  const prevBlock = formatPrevBlock(prev, windowStartMs);
+
+  const parts: string[] = [
+    `下面是《夕妖晚谣》TRPG 跑团最近约 ${secs} 秒的语音转写和游戏操作记录。`,
+    `请用 2-3 句简体中文总结这段时间发生了什么。重点写：剧情推进、判定的成败、资源变化、牵绊或阶段变化。`,
+    `只写记录里出现的事实，不要编造，不要评价好坏。如果内容太少，就写「这段时间没有实质进展」。`,
+    playerNames.length ? `参与玩家的角色名：${playerNames.join('、')}（提到这些名字时指的是玩家角色本人）。` : '',
+    prevBlock ? `下面的「前情提要」是更早时段的摘要，只用来理解本时段对话里的指代和因果：不要复述前情内容，也不要把前情当成这段时间发生的事。` : '',
+    prevBlock ? `【前情提要】\n${prevBlock}` : '',
+    '',
+    '【游戏操作】',
+    logBlock,
+    '',
+    '【语音记录】',
+    segBlock,
+  ];
+
+  return parts
+    .filter((l) => l !== '')
+    .join('\n')
+    .slice(0, MAX_PROMPT_CHARS);
+}
 
 export interface SummarizeResult {
   ok: boolean;
@@ -137,33 +218,23 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   const playerNames = (memRes.results || []).map((r) => r.name).filter((n): n is string => !!n);
 
   const secs = Math.round((endMs - startMs) / 1000);
-  const logBlock = logs.length
-    ? logs
-        .map(
-          (l) =>
-            `- ${l.character_name || '?'} ${RES_LABEL[l.resource_type] || l.resource_type} ${
-              l.change_amount > 0 ? '+' : ''
-            }${l.change_amount}${l.reason ? `（${l.reason}）` : ''}`
-        )
-        .join('\n')
-    : '（无）';
-  const segBlock = segs.map((s) => `- [${s.character_name || '未知'}] ${s.text}`).join('\n');
 
-  const prompt = [
-    `下面是《夕妖晚谣》TRPG 跑团最近约 ${secs} 秒的语音转写和游戏操作记录。`,
-    `请用 2-3 句简体中文总结这段时间发生了什么。重点写：剧情推进、判定的成败、资源变化、牵绊或阶段变化。`,
-    `只写记录里出现的事实，不要编造，不要评价好坏。如果内容太少，就写「这段时间没有实质进展」。`,
-    playerNames.length ? `参与玩家的角色名：${playerNames.join('、')}（提到这些名字时指的是玩家角色本人）。` : '',
-    '',
-    '【游戏操作】',
-    logBlock,
-    '',
-    '【语音记录】',
-    segBlock,
-  ]
-    .filter((l) => l !== '')
-    .join('\n')
-    .slice(0, MAX_PROMPT_CHARS);
+  // ④ 前情提要：取最近几条摘要作为上下文，帮助模型理解跨窗口的指代和因果
+  const prevRes = await db
+    .prepare(
+      `SELECT start_ms, end_ms, summary FROM room_summaries
+       WHERE room_id = ? AND end_ms >= ?
+       ORDER BY start_ms DESC LIMIT ?`
+    )
+    .bind(roomId, startMs - PREV_SUMMARY_LOOKBACK_MS, PREV_SUMMARY_COUNT)
+    .all<{ start_ms: number; end_ms: number; summary: string }>();
+  // 查询结果是 DESC，反转为时间正序（旧 → 新）
+  const prev: PrevSummary[] = (prevRes.results || [])
+    .map((r) => ({ startMs: r.start_ms, endMs: r.end_ms, summary: r.summary }))
+    .reverse();
+  console.debug(`[summary] prev-count room=${roomId} n=${prev.length}`);
+
+  const prompt = buildSummaryPrompt({ secs, playerNames, logs, segs, prev, windowStartMs: startMs });
 
   const t0 = Date.now();
   let out: unknown;
