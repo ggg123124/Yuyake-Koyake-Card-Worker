@@ -4,6 +4,7 @@ import { verifyToken } from '../utils/auth';
 import { Bindings, Variables } from '../types';
 import { archiveAndDeleteRoom } from './archives';
 import { validRoomCode, strLen } from '../utils/validate';
+import { generateRoomCode, pickUniqueRoomCode } from '../utils/roomCode';
 
 const route = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -21,38 +22,54 @@ route.post('/', authMiddleware, async (c) => {
   const body = await c.req.json<{ id?: string; name?: string }>();
   const { id, name } = body;
   const userId = c.get('userId');
-
-  if (!id || typeof id !== 'string') {
-    return c.json({ error: '房间代码不能为空' }, 400);
-  }
-
-  if (!validRoomCode(id)) {
-    return c.json({ error: '房间码必须是 4-12 位大写字母或数字' }, 400);
-  }
+  const db = c.env.DB;
 
   if (name !== undefined && !strLen(name, 50)) {
     return c.json({ error: '房间名不能超过 50 字符' }, 400);
   }
 
-  const db = c.env.DB;
+  // id 未传（或传空串）→ 自动生成；但传了非法类型必须报错，
+  // 不能静默忽略：否则客户端以为自己指定了房间码，实际拿到的是别的码。
+  if (id !== undefined && typeof id !== 'string') {
+    return c.json({ error: '房间代码格式错误' }, 400);
+  }
+  const manualId = typeof id === 'string' && id.length > 0 ? id : '';
 
-  // 检查房间代码是否已存在
-  const existing = await db
-    .prepare('SELECT id FROM rooms WHERE id = ?')
-    .bind(id)
-    .first();
-  if (existing) {
-    return c.json({ error: '房间代码已存在' }, 409);
+  let roomId: string;
+
+  if (manualId) {
+    // 手动指定房间码：保持原有校验
+    if (!validRoomCode(manualId)) {
+      return c.json({ error: '房间码必须是 4-12 位大写字母或数字' }, 400);
+    }
+    const existing = await db
+      .prepare('SELECT id FROM rooms WHERE id = ?')
+      .bind(manualId)
+      .first();
+    if (existing) {
+      return c.json({ error: '房间代码已存在' }, 409);
+    }
+    roomId = manualId;
+  } else {
+    // 自动生成 5 位房间码
+    const code = await pickUniqueRoomCode({
+      generate: () => generateRoomCode(),
+      isTaken: async (code) => !!(await db.prepare('SELECT id FROM rooms WHERE id = ?').bind(code).first()),
+    });
+    if (!code) {
+      return c.json({ error: '房间码生成失败，请重试' }, 500);
+    }
+    roomId = code;
   }
 
   await db
     .prepare("INSERT INTO rooms (id, name, gm_user_id, phase, last_active_at) VALUES (?, ?, ?, ?, datetime('now'))")
-    .bind(id, name || null, userId, 'scene')
+    .bind(roomId, name || null, userId, 'scene')
     .run();
 
   return c.json(
     {
-      id,
+      id: roomId,
       name: name || null,
       gmUserId: userId,
       phase: 'scene',
