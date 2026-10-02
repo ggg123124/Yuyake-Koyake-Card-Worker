@@ -73,14 +73,50 @@ const HALLUCINATION_PATTERNS: RegExp[] = [
   /明镜|点点|MING\s*PAO/i,
 ];
 
-function isHallucination(raw: string): boolean {
+// 词表回声检测用：把 initial_prompt 里的内置术语拆成数组
+const TERM_LIST = TERMS.split('、').filter(Boolean);
+
+// 判断一段转写文本是否为幻觉（应丢弃）。导出供单测。
+export function isHallucination(raw: string): boolean {
   const t = raw.trim().replace(/^[\s,，。、.!！?？…-]+|[\s,，。、.!！?？…-]+$/g, '');
   if (t.length < 2) return true; // 空串或纯标点
   if (HALLUCINATION_PATTERNS.some((re) => re.test(t))) return true; // 字幕套话
   const chars = t.replace(/\s/g, '');
   if (chars.length >= 6 && new Set(chars).size <= 3) return true; // 单字复读（啊啊啊啊）
   if (chars.length >= 6 && /^(.{2,4})\1{2,}$/.test(chars)) return true; // 短语整体复读
+  // 词表回声：把 initial_prompt 的「术语…」原样抄回来（2026-10-01 事故真实出现）
+  if (t.startsWith('术语')) {
+    const matched = TERM_LIST.filter((term) => t.includes(term)).length;
+    if (chars.length < 40 || matched >= 3) return true;
+  }
+  // 假名/西里尔幻觉：Whisper 在中文噪声上吐日语假名或西里尔字母（如「以上で終わりたいと思います」）
+  const nonSpace = Array.from(t).filter((ch) => ch.trim() !== '');
+  if (nonSpace.length >= 4) {
+    const foreign = nonSpace.filter((ch) => /[\u3040-\u30ff\u0400-\u04ff]/.test(ch)).length;
+    if (foreign / nonSpace.length >= 0.5) return true;
+  }
+  // 连续复读：去空白与标点后，同一 2~4 字短语连续重复 ≥4 次（非锚定，如「但是但是但是但是…」）
+  const compact = t.replace(/[\s,，。、.!！?？…·~～-]/g, '');
+  if (/(.{2,4})\1{3,}/.test(compact)) return true;
   return false;
+}
+
+// 一段转写是否应被丢弃：非法字节（U+FFFD 替换字符）或幻觉。返回原因，null 表示保留。
+// 非法字节单独判：U+FFFD 进库会污染摘要 prompt（2026-10-01 事故 837 条里 15 条含 U+FFFD）。导出供单测。
+export function dropReason(text: string): 'illegal-byte' | 'hallucination' | null {
+  if (text.includes('\uFFFD')) return 'illegal-byte';
+  if (isHallucination(text)) return 'hallucination';
+  return null;
+}
+
+// 把「相对本机录音起点的偏移」映射成绝对毫秒（baseMs = 会话起点的服务器绝对时间）。
+// 广播与 chunk 响应都用绝对毫秒：前端（transcript.html、index.html）按绝对 epoch 渲染，
+// 直接传相对值会让「他人」的行显示 1970 附近的假时间。与 GET /:code/transcript 的 startMs 同一基准。导出供单测。
+export function toAbsoluteSegments(
+  segs: Array<{ startMs: number; endMs: number; text: string }>,
+  baseMs: number
+): Array<{ startMs: number; endMs: number; text: string }> {
+  return segs.map((s) => ({ startMs: baseMs + s.startMs, endMs: baseMs + s.endMs, text: s.text }));
 }
 
 async function findMember(db: D1Database, roomId: string, userId: string) {
@@ -183,6 +219,9 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
       task: 'transcribe',
       initial_prompt: prompt,
       vad_filter: true,
+      // 该模型默认 condition_on_previous_text: true，官方文档称设为 false 可避免幻觉循环
+      // （2026-10-01 事故里出现「但是但是但是…」复读与日语假名幻觉）。只加这一个已验证参数，不臆测其它。
+      condition_on_previous_text: false,
     } as any);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -224,8 +263,10 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
     segments.forEach((seg, i) => {
       const text = (seg.text || '').trim();
       if (!text) return;
-      if (isHallucination(text)) {
-        dropped.push(text);
+      const dr = dropReason(text);
+      if (dr) {
+        // 非法字节段单独打标记，便于日志区分（沿用现有 dropped 机制留痕，不静默）
+        dropped.push(dr === 'illegal-byte' ? `[非法字节]${text}` : text);
         return;
       }
       const s = Math.max(0, Math.round((seg.start ?? 0) * 1000));
@@ -251,28 +292,35 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
       );
       outSegments.push({ startMs: startMs + s, endMs: startMs + e, text });
     });
-  } else if (fallbackText.trim() && !isHallucination(fallbackText.trim())) {
+  } else if (fallbackText.trim()) {
     const text = fallbackText.trim();
-    stmts.push(
-      db
-        .prepare(insertSql)
-        .bind(
-          `${sessionId}-${chunkSeq}-0`,
-          sessionId,
-          code,
-          userId,
-          sess.character_id ?? null,
-          sess.character_name ?? null,
-          chunkSeq,
-          0,
-          startMs,
-          startMs,
-          baseMs + startMs,
-          baseMs + startMs,
-          text
-        )
-    );
-    outSegments.push({ startMs, endMs: startMs, text });
+    const dr = dropReason(text);
+    if (dr) {
+      // fallback 整段是幻觉/非法字节：丢弃并留痕（此前只判 isHallucination，漏了 U+FFFD 非法字节）
+      dropped.push(dr === 'illegal-byte' ? `[非法字节]${text}` : text);
+      console.info(`[transcript] chunk-empty room=${code} seq=${chunkSeq}（fallback 文本被丢弃：${dr}）`);
+    } else {
+      stmts.push(
+        db
+          .prepare(insertSql)
+          .bind(
+            `${sessionId}-${chunkSeq}-0`,
+            sessionId,
+            code,
+            userId,
+            sess.character_id ?? null,
+            sess.character_name ?? null,
+            chunkSeq,
+            0,
+            startMs,
+            startMs,
+            baseMs + startMs,
+            baseMs + startMs,
+            text
+          )
+      );
+      outSegments.push({ startMs, endMs: startMs, text });
+    }
   } else {
     // 转写成功但这一片没有有效语音：仍然记录一次尝试，避免前端重复补传
     console.info(`[transcript] chunk-empty room=${code} seq=${chunkSeq}`);
@@ -291,15 +339,20 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
 
   if (dropped.length) {
     console.info(
-      `[transcript] 丢弃疑似幻觉 room=${code} seq=${chunkSeq} n=${dropped.length} 样例=${dropped.join(' | ').slice(0, 120)}`
+      `[transcript] 丢弃疑似幻觉/非法字节 room=${code} seq=${chunkSeq} n=${dropped.length} 样例=${dropped.join(' | ').slice(0, 120)}`
     );
   }
 
   if (stmts.length) await db.batch(stmts);
 
-  // 实时推送：把这一片的转写结果广播给房间内所有人
-  if (outSegments.length) {
-    await notifyTranscriptUpdate(c.env, code, sess.character_name ?? null, outSegments);
+  // 广播与响应体统一用「绝对毫秒」：outSegments.startMs/endMs 是相对本机录音起点的偏移，
+  // 前端（transcript.html L458、index.html renderTranscriptLine）按绝对 epoch 渲染，
+  // 直接传相对值会让「他人」的行显示 1970 附近的假时间（如 08:00:25）。baseMs = 会话起点的服务器绝对时间。
+  const absSegments = toAbsoluteSegments(outSegments, baseMs);
+
+  // 实时推送：把这一片的转写结果广播给房间内所有人（绝对毫秒）
+  if (absSegments.length) {
+    await notifyTranscriptUpdate(c.env, code, sess.character_name ?? null, absSegments);
 
     // 每约 2 分钟把「语音 + 游戏操作」汇总成一条事件摘要。
     // 用 waitUntil 不阻塞上传响应；失败只留痕，不影响已入库的转写结果。
@@ -318,7 +371,9 @@ route.post('/:code/transcript/chunk', authMiddleware, async (c) => {
   console.info(
     `[transcript] chunk room=${code} seq=${chunkSeq} bytes=${buf.byteLength} ai=${aiMs}ms segs=${outSegments.length}`
   );
-  return c.json({ ok: true, chunkSeq, aiMs, bytes: buf.byteLength, segments: outSegments, rawText: fallbackText });
+  // 注意：segments[].startMs/endMs 是「绝对毫秒」（与 GET /:code/transcript 同一基准），不是相对偏移；
+  // 前端本机行仍用 Date.now() 显示，拿到该字段不要再当成相对偏移二次换算。
+  return c.json({ ok: true, chunkSeq, aiMs, bytes: buf.byteLength, segments: absSegments, rawText: fallbackText });
 });
 
 // ---- 停止记录 ----

@@ -15,7 +15,7 @@ import { Bindings } from '../types';
 // 远低于每日 10,000 neurons 的免费额度，故不为省钱牺牲质量。
 
 const MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct';
-const WINDOW_MS = 120_000; // 约 2 分钟一个窗口
+export const WINDOW_MS = 120_000; // 约 2 分钟一个窗口
 const MIN_SEGMENTS = 2; // 素材太少不值得调模型
 const MAX_SEGMENTS = 300;
 const MAX_LOGS = 80;
@@ -23,6 +23,83 @@ export const MAX_PROMPT_CHARS = 8000;
 export const PREV_SUMMARY_COUNT = 3;
 export const PREV_SUMMARY_MAX_CHARS = 600;
 export const PREV_SUMMARY_LOOKBACK_MS = 600_000;
+
+// —— 摘要窗口锚定「素材水位」相关常量 ——
+// 2026-10-01 事故根因：窗口右端曾用墙钟 Date.now()，素材（语音段）晚到落在「已过去的窗口」里，
+// 之后窗口起点又前移 ⇒ 这些素材永远不会被任何摘要覆盖（线上每条摘要 source_segments=0，只剩资源流水）。
+export const ACTIVE_SESSION_MS = 180_000; // 会话最近 3 分钟内有素材到库才算「仍在录」
+export const WATERMARK_PIN_MAX_LAG_MS = 600_000; // 水位落后墙钟超过 10 分钟就不再 pin（要 WARN 留痕）
+export const MAX_WINDOW_MS = 300_000; // 单条摘要最长覆盖 5 分钟（本次事故出现过 75 分钟的超长窗口）
+export const TAIL_WINDOW_MS = 15_000; // 全部会话已结束时，允许用一小段收尾窗口把最后素材收掉
+
+export interface SessionWatermarkRow {
+  status: string;
+  maxAbsEndMs: number | null;
+  lastRecvAt: string | null; // datetime('now') 文本（UTC）
+}
+
+// 返回本房间的「素材水位」（ms）：窗口右端不再用墙钟，而用「已经到库的素材水位」。
+// 没有任何素材返回 null。
+export function pickWatermark(
+  segMaxAbsEndMs: number | null,
+  sessions: SessionWatermarkRow[],
+  nowMs: number
+): { watermark: number | null; pinned: boolean; lagMs: number } {
+  const base = segMaxAbsEndMs;
+  if (base == null) return { watermark: null, pinned: false, lagMs: 0 };
+
+  // 活跃会话：status='recording' 且最近 ACTIVE_SESSION_MS 内有素材到库且有 abs_end_ms。
+  const active = sessions.filter((s) => {
+    if (s.status !== 'recording' || s.maxAbsEndMs == null || !s.lastRecvAt) return false;
+    // lastRecvAt 是 SQLite datetime('now') 文本（UTC），按 replace(' ','T')+'Z' 解析
+    const recvMs = Date.parse(s.lastRecvAt.replace(' ', 'T') + 'Z');
+    if (!Number.isFinite(recvMs)) return false;
+    return nowMs - recvMs <= ACTIVE_SESSION_MS;
+  });
+
+  if (active.length === 0) {
+    return { watermark: base, pinned: false, lagMs: nowMs - base };
+  }
+
+  // 活跃会话把水位往回 pin 到「最慢的活跃会话」，避免它的晚到素材被跳过
+  const pinned = Math.min(...active.map((s) => s.maxAbsEndMs as number));
+  const lagMs = nowMs - pinned;
+  if (lagMs <= WATERMARK_PIN_MAX_LAG_MS) {
+    return { watermark: Math.min(base, pinned), pinned: true, lagMs };
+  }
+  // pin 落后墙钟超过上限：某个「活跃」会话的水位异常陈旧，不再 pin，保持 base 并 WARN 留痕（禁静默降级）
+  console.warn(
+    `[summary] watermark-pin-stale room水位拖后腿 pinned=${pinned} base=${base} 落后墙钟=${Math.round(
+      lagMs / 1000
+    )}s（>${WATERMARK_PIN_MAX_LAG_MS / 1000}s），回退到素材水位 base`
+  );
+  return { watermark: base, pinned: false, lagMs };
+}
+
+export interface WindowInput {
+  lastEndMs: number | null; // 上一条摘要的 end_ms
+  watermark: number; // 素材水位（pickWatermark 结果，非 null）
+  hasRecordingSession: boolean; // 房间里是否仍有 status='recording' 的会话
+}
+export interface WindowResult {
+  startMs: number;
+  endMs: number;
+  skip: 'too-soon' | null;
+}
+
+// 纯函数：由「上一条摘要 end_ms + 素材水位」算出本条摘要窗口，便于单测。
+export function computeWindow(inp: WindowInput): WindowResult {
+  const { lastEndMs, watermark, hasRecordingSession } = inp;
+  const startMs = lastEndMs ?? Math.max(0, watermark - WINDOW_MS);
+  // 单条摘要最长覆盖 MAX_WINDOW_MS（事故里出现过 75 分钟超长窗口 → 模型只能空泛复读前情提要）
+  const endMs = Math.min(watermark, startMs + MAX_WINDOW_MS);
+  const span = endMs - startMs;
+  // 仍在录音：窗口不足 WINDOW_MS 就等下一轮（too-soon）；
+  // 全部 done：允许用 TAIL_WINDOW_MS 的收尾窗口把最后素材收掉，否则停录后的末段会被永久留在库外。
+  const minSpan = hasRecordingSession ? WINDOW_MS : TAIL_WINDOW_MS;
+  if (span < minSpan) return { startMs, endMs, skip: 'too-soon' };
+  return { startMs, endMs, skip: null };
+}
 
 const RES_LABEL: Record<string, string> = { dream: '梦点', feeling: '心意点', wonder: '奇迹点' };
 
@@ -159,33 +236,70 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
     .prepare('SELECT end_ms FROM room_summaries WHERE room_id = ? ORDER BY end_ms DESC LIMIT 1')
     .bind(roomId)
     .first<{ end_ms: number }>();
+  const lastEndMs = last?.end_ms ?? null;
 
-  if (last && now - last.end_ms < WINDOW_MS) {
-    console.debug(
-      `[summary] skip room=${roomId} reason=too-soon 距上次 ${Math.round((now - last.end_ms) / 1000)}s`
+  // 素材水位（房间维度）：已入库语音段的最大 abs_end_ms
+  const segMax = await db
+    .prepare('SELECT MAX(abs_end_ms) AS mx FROM transcript_segments WHERE room_id = ?')
+    .bind(roomId)
+    .first<{ mx: number | null }>();
+  const segMaxAbsEndMs = segMax?.mx ?? null;
+
+  // 素材水位（会话维度）+ 最近到库时间：recv 用 MAX(created_at)（datetime('now') 文本，UTC）
+  const sessRes = await db
+    .prepare(
+      `SELECT s.id AS id, s.status AS status, MAX(seg.abs_end_ms) AS mx, MAX(seg.created_at) AS recv
+       FROM transcript_sessions s
+       LEFT JOIN transcript_segments seg ON seg.session_id = s.id
+       WHERE s.room_id = ?
+       GROUP BY s.id`
+    )
+    .bind(roomId)
+    .all<{ id: string; status: string; mx: number | null; recv: string | null }>();
+  const sessRows = sessRes.results || [];
+  const hasRecordingSession = sessRows.some((r) => r.status === 'recording');
+
+  const { watermark, pinned, lagMs } = pickWatermark(
+    segMaxAbsEndMs,
+    sessRows.map((r) => ({ status: r.status, maxAbsEndMs: r.mx, lastRecvAt: r.recv })),
+    now
+  );
+  if (watermark === null) {
+    // 没有任何素材：沿用 not-enough-material 跳过（留痕，不静默）
+    console.info(
+      `[summary] skip room=${roomId} reason=not-enough-material 无素材水位 segMax=${segMaxAbsEndMs} sessions=${sessRows.length}`
     );
-    return { ok: true, skipped: 'too-soon' };
+    return { ok: true, skipped: 'not-enough-material' };
   }
 
-  const startMs = last?.end_ms ?? now - WINDOW_MS;
-  const endMs = now;
-  // 取素材时右边界留 30s 容差：上传有延迟，且客户端算出的片段起点可能贴近甚至略晚于 now
-  // （实测复现：瞬间上传 21s 音频时，第 2 片起点落 now 之后被排除 → 误判素材不足而跳过）。
-  // 注意入库的摘要仍记录真实的 endMs。
-  const segEndMs = endMs + 30_000;
+  const win = computeWindow({ lastEndMs, watermark, hasRecordingSession });
+  if (win.skip) {
+    const span = win.endMs - win.startMs;
+    console.info(
+      `[summary] skip room=${roomId} reason=${win.skip} span=${span}ms 需≥${
+        hasRecordingSession ? WINDOW_MS : TAIL_WINDOW_MS
+      }ms watermark=${watermark} pinned=${pinned} 水位落后墙钟=${lagMs}ms`
+    );
+    return { ok: true, skipped: win.skip };
+  }
 
-  // ① 窗口内的语音转写
+  const startMs = win.startMs;
+  const endMs = win.endMs;
+
+  // ① 窗口内的语音转写 —— 严格 [startMs, endMs)。
+  // 不再留旧的 +30s 右容差：窗口右端已改为「素材水位」，水位保证窗口内的素材都已到库；
+  // 若仍留容差，边界处的素材会被相邻两条摘要重复计入。
   const segRes = await db
     .prepare(
       `SELECT character_name, abs_start_ms, text FROM transcript_segments
        WHERE room_id = ? AND abs_start_ms >= ? AND abs_start_ms < ?
        ORDER BY abs_start_ms ASC LIMIT ?`
     )
-    .bind(roomId, startMs, segEndMs, MAX_SEGMENTS)
+    .bind(roomId, startMs, endMs, MAX_SEGMENTS)
     .all<{ character_name: string | null; abs_start_ms: number; text: string }>();
   const segs = segRes.results || [];
 
-  // ② 窗口内的游戏操作（resource_logs 存的是 character_id，JOIN 出名字）
+  // ② 窗口内的游戏操作（resource_logs 存的是 character_id，JOIN 出名字）—— 同样严格 [startMs, endMs)
   const logRes = await db
     .prepare(
       `SELECT c.name AS character_name, rl.resource_type, rl.change_amount, rl.reason
@@ -195,7 +309,7 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
          AND rl.created_at <  datetime(?, 'unixepoch')
        ORDER BY rl.id ASC LIMIT ?`
     )
-    .bind(roomId, Math.floor(startMs / 1000), Math.floor(segEndMs / 1000), MAX_LOGS)
+    .bind(roomId, Math.floor(startMs / 1000), Math.floor(endMs / 1000), MAX_LOGS)
     .all<{ character_name: string | null; resource_type: string; change_amount: number; reason: string | null }>();
   const logs = logRes.results || [];
 

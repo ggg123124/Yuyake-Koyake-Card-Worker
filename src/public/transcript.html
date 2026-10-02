@@ -210,8 +210,20 @@ let voicedSamples = 0;      // 当前句已累积的「有声」样本数
 let silenceRun = 0;         // 连续静音样本数
 let curFrames = [];         // 当前句的帧（Float32Array）
 let preRoll = [];           // 语音前的滚动缓冲
-let curStartSamples = 0;    // 当前句起点（相对录音开始的样本偏移）
-let consumedSamples = 0;    // 已切走的总样本数
+// 跨回调残帧缓冲：createScriptProcessor(4096,1,1) 每回调给 4096 样本，而一帧是 320 样本，4096 % 320 = 256。
+// 若不缓存余数，每回调末尾不足一帧的 256 样本（16ms）会被丢掉——既不进 VAD、也不计数、更不上传，
+// 时间线被压到 3840/4096 = 0.938，且上传音频每 256ms 出现一段 16ms 缺口，劣化 Whisper 输入。
+let pendingSamples = new Float32Array(0);
+// 时间基准：以 AudioContext 硬件单调时钟（audioCtx.currentTime）作为帧的时刻来源，对「音频线程丢回调」免疫。
+// 样本计数隐含「回调一个都不漏」的假设，一旦漏一个（processAudio 外层 catch 会吞掉异常）时间线就再次落后墙钟，
+// 而跨人合并（按 abs 时间排序）需要的是墙上时钟。
+let curStartSec = 0;           // 当前句起点（音频时钟秒；时钟不可用时回退为样本计数折算的秒）
+let ctxOriginSec = 0;          // 会话锚点：POST /transcript/session 那一刻的 audioCtx.currentTime
+// capturedSamples 保留为诊断量：与音频时钟推进对比，背离过大即说明丢过回调（时间线仍以时钟为准）。
+let capturedSamples = 0;       // 已采集样本总数（诊断用，只增不减）
+let sessionOriginSamples = 0;  // 会话锚点：POST /transcript/session 那一刻的 capturedSamples
+let lastDriftWarnSec = 0;      // 上次告警时的「时钟−样本」背离秒数（同一背离只告警一次，避免每回调刷屏）
+let clockFallbackWarned = false; // 音频时钟不可用只告警一次（禁静默降级）
 
 // 上传队列（顺序上传，避免序号乱序）
 const queue = [];
@@ -291,12 +303,17 @@ function rmsOf(f) {
 function cutUtterance(reason) {
   const chunksArr = curFrames;
   const voiced = voicedSamples;
-  const startSamples = curStartSamples;
+  const startSec = curStartSec;
+  // 先取「重置前」的句尾静音长度：下面的尾部裁切要用它。
+  // 旧代码先 silenceRun=0 再判断 silenceRun>tailKeep，永远为假 ⇒ 句尾裁切从未生效，
+  // VAD.tailSilenceMs 的意图落空，最长 700ms 尾静音被原样带给 Whisper（诱发幻觉）。
+  const tailRun = silenceRun;
   curFrames = [];
   speaking = false;
   voicedSamples = 0;
   silenceRun = 0;
-  curStartSamples = consumedSamples;
+  // 起点已存入局部 startSec；下一次语音起始帧会基于音频时钟重新写入，这里把游标推进到当前采集位置。
+  curStartSec = ctxOriginSec + (capturedSamples - sessionOriginSamples) / sampleRate;
 
   if (!chunksArr.length) return;
   const durMs = (voiced / sampleRate) * 1000;
@@ -305,19 +322,26 @@ function cutUtterance(reason) {
     console.debug(`[vad] 丢弃过短片段 ${Math.round(durMs)}ms（${reason}）`);
     return;
   }
-  // 裁掉多余尾部静音：留一点句末感即可，过长静音会诱发 Whisper 幻觉（「请点赞订阅」那类）
+  // 裁掉多余尾部静音：留一点句末感即可，过长静音会诱发 Whisper 幻觉（「请点赞订阅」那类）。
+  // 只影响上传音频长度，不影响 startMs（起点不变）。
   const tailKeep = Math.round((VAD.tailSilenceMs / 1000) * sampleRate);
   let keep = chunksArr.length;
-  if (silenceRun > tailKeep) {
+  if (tailRun > tailKeep) {
     let removed = 0;
-    while (keep > 1 && removed < silenceRun - tailKeep) {
+    while (keep > 1 && removed < tailRun - tailKeep) {
       removed += chunksArr[keep - 1].length;
       keep--;
     }
   }
   const pcm = mergeFrames(chunksArr.slice(0, keep));
-  consumedSamples += pcm.length;
-  queue.push({ pcm, startMs: Math.round((startSamples / sampleRate) * 1000), durMs: Math.round((pcm.length / sampleRate) * 1000), reason });
+  // startMs：相对会话锚点的绝对毫秒基准，与服务器 started_at_ms 同一基准（只差一个网络往返）。
+  let startMs = Math.round((startSec - ctxOriginSec) * 1000);
+  if (startMs < 0) {
+    // 会话建立前就切出的片段：钳到 0，绝不丢数据；发生钳位必须留痕（本项目禁静默降级）。
+    console.info(`[vad] 片段起点早于会话锚点，钳到 0：startSec=${startSec} ctxOriginSec=${ctxOriginSec} 原始startMs=${startMs}`);
+    startMs = 0;
+  }
+  queue.push({ pcm, startMs, durMs: Math.round((pcm.length / sampleRate) * 1000), reason });
   $('st-queue').textContent = String(queue.length);
   pumpQueue();
 }
@@ -363,8 +387,35 @@ function processAudio(input, rate) {
   const silenceSamples = Math.round((VAD.silenceMs / 1000) * rate);
   const maxChunkSamples = Math.round((VAD.maxChunkMs / 1000) * rate);
 
-  for (let i = 0; i + frameLen <= input.length; i += frameLen) {
-    const frame = input.slice(i, i + frameLen);
+  // 跨回调残帧缓冲：把上一轮不足一帧的尾部与本轮 input 拼接后再切帧，保证每个样本都被
+  // VAD 分析、被计数、被上传（否则每回调丢 4096%320=256 样本，时间线压缩到 0.938 且音频出现周期性缺口）。
+  let combined = input;
+  if (pendingSamples.length) {
+    combined = new Float32Array(pendingSamples.length + input.length);
+    combined.set(pendingSamples, 0);
+    combined.set(input, pendingSamples.length);
+  }
+
+  // 时间来源：优先 AudioContext 硬件单调时钟（对丢回调免疫）。combined 的最后一个样本落在 audioCtx.currentTime，
+  // 故首样本时刻 = currentTime - combined.length/rate（与建会话时同一套近似，常数延迟两端相消）。
+  const clockOk = !!audioCtx && Number.isFinite(audioCtx.currentTime);
+  let bufStartSec = 0;
+  if (clockOk) {
+    bufStartSec = audioCtx.currentTime - combined.length / rate;
+  } else if (!clockFallbackWarned) {
+    // 音频时钟不可用（测试/异常环境）：回退到样本计数折算，并留痕一次（禁静默降级）。
+    console.warn('[vad] AudioContext 时钟不可用（currentTime 非有限数），时间基准回退到样本计数');
+    clockFallbackWarned = true;
+  }
+
+  for (let i = 0; i + frameLen <= combined.length; i += frameLen) {
+    const frame = combined.slice(i, i + frameLen);
+    const frameCapturedStart = capturedSamples;  // 该帧起点（回退基准用）
+    capturedSamples += frame.length;             // 诊断量：进入 processAudio 的每一帧都计数
+    // 该帧起始时刻（秒）：时钟模式用 bufStartSec + 帧内偏移；回退模式用样本计数折算到锚点。
+    const frameSec = clockOk
+      ? bufStartSec + i / rate
+      : ctxOriginSec + (frameCapturedStart - sessionOriginSamples) / rate;
     const r = rmsOf(frame);
     const thr = Math.max(noiseFloor * VAD.gain, VAD.floorAbs);
     const isSpeech = r > thr;
@@ -380,7 +431,8 @@ function processAudio(input, rate) {
         speaking = true;
         curFrames = preRoll.slice();     // 带上语音前的缓冲，避免吞字头
         const preSamples = curFrames.reduce((a, b) => a + b.length, 0);
-        curStartSamples = Math.max(0, consumedSamples - preSamples);
+        // 句子起点 = 该帧时刻回退 preRoll 时长（preRoll 里的帧紧挨在本帧之前，时刻连续）。
+        curStartSec = frameSec - preSamples / rate;
         preRoll = [];
         voicedSamples = 0;
       }
@@ -405,6 +457,23 @@ function processAudio(input, rate) {
     if (speaking) {
       const acc = curFrames.reduce((a, b) => a + b.length, 0);
       if (acc >= maxChunkSamples) cutUtterance('超长');
+    }
+  }
+
+  // 尾部不足一帧的样本存回 pendingSamples，等下一轮回调拼接（不丢任何样本）。
+  const consumed = Math.floor(combined.length / frameLen) * frameLen;
+  pendingSamples = consumed < combined.length ? combined.slice(consumed) : new Float32Array(0);
+
+  // 诊断：比较「样本推进」与「音频时钟推进」。背离 > 1s 说明音频线程丢过回调
+  // （时间线以音频时钟为准，startMs 不受影响，但必须留痕，禁静默降级）。
+  // 同一背离只告警一次，背离再增大 1s 才复告警，避免每次回调刷屏。
+  if (clockOk) {
+    const sampleAdvanceSec = (capturedSamples - sessionOriginSamples) / rate;
+    const clockAdvanceSec = audioCtx.currentTime - ctxOriginSec;
+    const driftSec = clockAdvanceSec - sampleAdvanceSec;
+    if (Math.abs(driftSec) > 1.0 && Math.abs(driftSec - lastDriftWarnSec) > 1.0) {
+      console.warn(`[vad] 音频时钟与样本计数背离 ${driftSec.toFixed(2)}s（时钟推进 ${clockAdvanceSec.toFixed(2)}s / 样本推进 ${sampleAdvanceSec.toFixed(2)}s）：音频线程可能丢过回调，时间线以音频时钟为准`);
+      lastDriftWarnSec = driftSec;
     }
   }
 
@@ -489,13 +558,22 @@ async function start() {
     sourceNode.connect(processorNode);
     processorNode.connect(audioCtx.destination);
 
+    // 会话锚点：与已有的 clientTs 同一时刻，同时记录「音频时钟」与「样本计数」两个基准，
+    // 使 startMs 与服务器 started_at_ms 只差一个网络往返（~100ms 级，远小于本项目 1s 的合并容差）。
+    const originCtxTime = audioCtx.currentTime;
+    const originSamples = capturedSamples;
+    const clientTs = Date.now();
     const sess = await api(`/api/rooms/${encodeURIComponent(roomCode)}/transcript/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientTs: Date.now(), deviceLabel: (mediaStream.getAudioTracks()[0] || {}).label || '' }),
+      body: JSON.stringify({ clientTs, deviceLabel: (mediaStream.getAudioTracks()[0] || {}).label || '' }),
     });
     sessionId = sess.sessionId;
-    consumedSamples = 0;
+    // 会话重新锚定：清空跨回调残帧缓冲，并把两个基准都对齐到锚点、复位背离告警游标。
+    pendingSamples = new Float32Array(0);
+    ctxOriginSec = originCtxTime;
+    sessionOriginSamples = originSamples;
+    lastDriftWarnSec = 0;
     $('st-offset').textContent = (sess.offsetMs >= 0 ? '+' : '') + sess.offsetMs + 'ms';
     $('prompt').textContent = sess.prompt || '(无)';
 

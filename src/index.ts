@@ -76,16 +76,17 @@ async function handleScheduled(env: Bindings): Promise<void> {
 // 为什么不只靠请求内的 waitUntil：实测转写上传响应返回后，后台任务存在被回收而丢失的情况
 // （同一房间、同样素材，一次成功一次没生成）。定时任务不依赖任何浏览器或前台请求的生命周期。
 async function sweepSummaries(env: Bindings) {
-  const since = Date.now() - 10 * 60 * 1000; // 最近 10 分钟内有转写的房间
+  // 选房条件按「素材到达时间」而非 abs_start_ms：abs_start_ms 曾是客户端压缩过的时间基准，
+  // 会漏掉仍活跃的房间（线上实测开团期间 scanned 反复为 0）。created_at 是素材真正入库的墙钟时间，不受该 bug 影响。
+  const sinceNote = "ts.created_at >= datetime('now','-10 minutes')";
   // JOIN rooms：房间销毁后其转写原始数据仍留在库中（内容已进归档快照），
   // 若不限定房间仍存在，sweep 会对着已销毁房间反复生成摘要。
   const rows = await env.DB.prepare(
     `SELECT DISTINCT ts.room_id AS room_id
      FROM transcript_segments ts
      JOIN rooms r ON r.id = ts.room_id
-     WHERE ts.abs_start_ms >= ? LIMIT 50`
+     WHERE ts.created_at >= datetime('now','-10 minutes') LIMIT 50`
   )
-    .bind(since)
     .all<{ room_id: string }>();
 
   const rooms = rows.results || [];
@@ -93,12 +94,12 @@ async function sweepSummaries(env: Bindings) {
   // 「cron 到底有没有被触发」这个关键事实（本项目禁用无从核查的静默路径）。
   try {
     await env.DB.prepare('INSERT INTO cron_heartbeat (job, scanned, note) VALUES (?, ?, ?)')
-      .bind('sweep-summaries', rooms.length, `since=${since}`)
+      .bind('sweep-summaries', rooms.length, sinceNote)
       .run();
   } catch (e) {
     console.warn(`[summary] heartbeat-failed err=${e instanceof Error ? e.message : String(e)}`);
   }
-  console.info(`[summary] sweep 扫描到 ${rooms.length} 个活跃房间（近 10 分钟有转写且仍存在）`);
+  console.info(`[summary] sweep 扫描到 ${rooms.length} 个活跃房间（近 10 分钟有转写到库且仍存在）`);
   if (!rooms.length) return;
 
   for (const r of rooms) {
