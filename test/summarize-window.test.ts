@@ -322,12 +322,12 @@ describe('computeWindow：起点落到下一条素材（死锁修法）', () => 
     expect(next.skip).toBeNull();
   });
 
-  // ⚠️ 已知残留边界（如实记录，非期望行为）：会话全部结束后，若锚点之后只剩「贴着水位的一小段素材」，
-  // 起点落到素材上反而把窗口压到 < TAIL_WINDOW_MS ⇒ too-soon ⇒ 这段尾巴补不上（锚点也不再前进）。
-  // 本地 E2E 房间 BKFCAP 实测复现：22 段补了 21 段，最后 1 段（cap-21）永远停在 remainingMs=63000 里。
-  // 不跨过空档的话窗口是 [锚点, 水位)，长度够也盖得住这段素材 —— 但那会让「锚点落后很久 + 只有孤立尾段」
-  // 的场景退回 4 天死锁，故本轮按简报给定的规则实现，此处只把该边界钉住，改动时会被这条用例提醒。
-  it('已知残留：结束后只剩贴水位的孤立尾段 → span=3s < TAIL_WINDOW_MS ⇒ too-soon（尾段补不上）', () => {
+  // ✅ 2026-10-06 已修：会话全部结束后，若锚点之后只剩「隔着一段空档的末段素材」，
+  // 旧版无条件 gap-skip 会把起点推到那条素材上，窗口 span 只剩素材本身那几秒 < TAIL_WINDOW_MS ⇒ 恒 too-soon ⇒
+  // 尾段永远补不上、锚点也不再前进（本地 E2E 房间 BKFCAP 实测：22 段补了 21 段，最后 1 段卡在 remainingMs=63000）。
+  // 修法是把 gap-skip 变成条件性的：只有「不跳窗口就必被 MAX_WINDOW_MS 截断、够不到尾部素材」时才跳。
+  // 锚点距水位 63s（< MAX_WINDOW_MS）时保持旧行为：起点 = lastEndMs，窗口 [锚点, 水位) 盖得住那条尾段素材。
+  it('收尾场景：锚点距水位 63s + 空档 60s + 末段素材 3s（全 done）→ 不再 too-soon，起点仍是锚点', () => {
     const anchor = NOW - 63_000; // 上一条摘要的 end_ms（E2E 实测值）
     const tail = NOW - 3_000; // 尾段长 3s，abs_end_ms 恰好就是水位
     const r = computeWindow({
@@ -336,12 +336,110 @@ describe('computeWindow：起点落到下一条素材（死锁修法）', () => 
       hasRecordingSession: false,
       nextMaterialStartMs: tail,
     });
-    console.log('[window] 孤立尾段（已知残留）→', JSON.stringify(r));
-    expect(r.startMs).toBe(tail);
+    console.log('[window] 收尾场景（修后）→', JSON.stringify(r));
+    expect(r.startMs).toBe(anchor); // = lastEndMs：不再被推到素材上
+    expect(r.gapSkippedMs).toBe(0);
+    expect(r.endMs).toBe(NOW); // = watermark（span 63s < MAX_WINDOW_MS，不截断）
+    expect(r.endMs - r.startMs).toBe(63_000);
+    expect(r.skip).toBeNull(); // 关键：不再恒 too-soon
+    // 尾段素材落在窗口 [startMs, endMs) 内 ⇒ 这一轮的素材查询一定取得到它
+    expect(tail).toBeGreaterThanOrEqual(r.startMs);
+    expect(tail).toBeLessThan(r.endMs);
+  });
+});
+
+// 本轮（2026-10-06）把 gap-skip 改成条件性：只有 watermark - startMs > MAX_WINDOW_MS（不跳就必被截断）才跳。
+// 三条必须钉住的行为：① 收尾残留场景不再 too-soon；② 4 天积压仍必须跳（不能因为这次改动复活死锁）；
+// ③ 边界用 > 而不是 >=（恰好等于 MAX_WINDOW_MS 时不跳，因为此时窗口刚好够、不会被截断）。
+describe('computeWindow：条件性 gap-skip（只在「不跳就会被截断」时才跳）', () => {
+  const FOUR_DAYS = 4 * 24 * 3600 * 1000;
+
+  it('① 残留场景（锚点距水位 63s、空档 60s、末段素材 3s、全 done）→ 不跳、不 too-soon', () => {
+    const anchor = NOW - 63_000;
+    const r = computeWindow({
+      lastEndMs: anchor,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: NOW - 3_000, // 空档 60s：锚点之后第一条素材贴着水位
+    });
+    console.log('[gap-skip] ① 残留场景 →', JSON.stringify(r));
+    expect(NOW - anchor).toBeLessThanOrEqual(MAX_WINDOW_MS); // 前提：不跳也不会被截断
+    expect(r.startMs).toBe(anchor);
+    expect(r.gapSkippedMs).toBe(0);
+    expect(r.skip).toBeNull();
+  });
+
+  it('② 4 天积压（watermark - 锚点 远大于 MAX_WINDOW_MS）→ 仍 gap-skip，起点落到素材上', () => {
+    const anchor = NOW - FOUR_DAYS;
+    const nextMat = NOW - 90_000;
+    const r = computeWindow({
+      lastEndMs: anchor,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: nextMat,
+    });
+    console.log('[gap-skip] ② 4 天积压 →', JSON.stringify(r));
+    expect(NOW - anchor).toBeGreaterThan(MAX_WINDOW_MS); // 前提：不跳必被截断
+    expect(r.gapSkippedMs).toBeGreaterThan(0);
+    expect(r.gapSkippedMs).toBe(nextMat - anchor);
+    expect(r.startMs).toBe(nextMat); // 起点落到素材上，死锁不会复活
+    expect(r.skip).toBeNull();
+  });
+
+  it('③ 边界：watermark - startMs 恰好 = MAX_WINDOW_MS → 不跳（用 > 而不是 >=）', () => {
+    const anchor = NOW - MAX_WINDOW_MS;
+    const nextMat = NOW - 3_000;
+    const r = computeWindow({
+      lastEndMs: anchor,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: nextMat,
+    });
+    console.log('[gap-skip] ③ 恰好等于 MAX_WINDOW_MS →', JSON.stringify(r));
+    expect(NOW - anchor).toBe(MAX_WINDOW_MS);
+    expect(r.startMs).toBe(anchor);
+    expect(r.gapSkippedMs).toBe(0);
+    expect(r.endMs).toBe(NOW); // 窗口刚好够，不会被截断
+    expect(r.skip).toBeNull();
+    expect(nextMat).toBeGreaterThanOrEqual(r.startMs);
+    expect(nextMat).toBeLessThan(r.endMs); // 尾段素材仍被这一轮盖住
+  });
+
+  // ⚠️ 如实记录的残留边界（本轮按简报给定规则实现，未擅自扩大条件）：
+  // 锚点比水位落后「刚好超过 MAX_WINDOW_MS」、而锚点之后只剩一条贴水位的短素材时，
+  // 条件 watermark - startMs > MAX_WINDOW_MS 成立 ⇒ 仍会 gap-skip ⇒ span 只剩素材那几秒 < TAIL_WINDOW_MS ⇒ too-soon。
+  // 值得注意：此时「不跳」其实也不会丢素材 —— 截断后的窗口 [锚点, 锚点+MAX_WINDOW_MS) 已经盖住了它。
+  // 更严格的条件是 nextMaterialStartMs > startMs + MAX_WINDOW_MS（素材落在截断窗口之外才跳），
+  // 但那超出本轮简报给定的规则，故未改，只把实际行为钉在这里并写进报告。
+  it('③ 对照：再晚 1ms（> MAX_WINDOW_MS）就会跳 ⇒ 孤立短尾段仍 too-soon（残留边界）', () => {
+    const anchor = NOW - MAX_WINDOW_MS - 1;
+    const nextMat = NOW - 3_000;
+    const r = computeWindow({
+      lastEndMs: anchor,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: nextMat,
+    });
+    console.log('[gap-skip] ③ 对照 MAX_WINDOW_MS+1ms →', JSON.stringify(r));
+    expect(r.startMs).toBe(nextMat); // 证明边界确实是 >（等于时不跳、多 1ms 就跳）
+    expect(r.gapSkippedMs).toBe(nextMat - anchor);
     expect(r.endMs).toBe(NOW);
     expect(r.endMs - r.startMs).toBe(3_000);
     expect(r.skip).toBe('too-soon');
-    expect(r.gapSkippedMs).toBe(60_000);
+  });
+
+  it('锚点在 MAX_WINDOW_MS 之内但下一条素材不晚于锚点 → 本来就不该跳（与旧版一致）', () => {
+    const anchor = NOW - 63_000;
+    const r = computeWindow({
+      lastEndMs: anchor,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: anchor - 500, // 与锚点尾部重叠的那条段
+    });
+    console.log('[gap-skip] 重叠素材 + 锚点很近 →', JSON.stringify(r));
+    expect(r.startMs).toBe(anchor);
+    expect(r.gapSkippedMs).toBe(0);
+    expect(r.skip).toBeNull();
   });
 });
 

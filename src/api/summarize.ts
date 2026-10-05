@@ -108,8 +108,18 @@ export function computeWindow(inp: WindowInput): WindowResult {
   // 锚点永远推不动 ⇒ 之后所有素材都进不了摘要（实测该房 1103 条语音段全部漏掉）。
   // 修法是把起点「落到锚点之后的第一条素材上」：空档（无素材的静默期）被跨过，
   // 但积压素材一条都不会丢，配合 maybeSummarize 的 catchUp 循环可逐窗把积压补完。
+  //
+  // 但只在「不跳就必被截断」时才跳（2026-10-06 修「收尾窗口永远补不上」）：
+  // 无条件跳会把「锚点距水位不足 MAX_WINDOW_MS、中间只隔着一段空档」的收尾窗口起点也推到末段素材上，
+  // span 只剩那条素材的几秒 < TAIL_WINDOW_MS ⇒ 恒 too-soon，锚点也不再前进，那段尾巴永远进不了摘要
+  // （本地 E2E 房间 BKFCAP 实测：22 段补了 21 段，最后 1 段停在 remainingMs=63000）。
+  // 锚点仍在 MAX_WINDOW_MS 之内时不跳：窗口 [锚点, 水位) 天然盖住末段素材，靠 TAIL_WINDOW_MS 收尾即可。
   let gapSkippedMs = 0;
-  if (nextMaterialStartMs != null && nextMaterialStartMs > startMs) {
+  if (
+    watermark - startMs > MAX_WINDOW_MS &&
+    nextMaterialStartMs != null &&
+    nextMaterialStartMs > startMs
+  ) {
     gapSkippedMs = nextMaterialStartMs - startMs;
     startMs = nextMaterialStartMs;
   }
@@ -226,6 +236,36 @@ function cleanSummary(raw: string): string {
     .replace(/```[a-z]*/gi, '')
     .replace(/^\s*(摘要|总结)\s*[:：]\s*/, '')
     .trim();
+}
+
+// 「按 roomId 关闭摘要开关」的统一入口。房间没人时（DO 空闲 alarm / 成员清零兜底）自动关掉摘要：
+// 没人在跑团就不该继续每 2 分钟烧一轮水位查询和 AI 花费。
+// WHERE 带 summary_enabled = 1：本来就是关的时候不重复写库，changes 也因此能区分「本次真关了」和「早就是关的」。
+export const DISABLE_SUMMARY_SQL =
+  'UPDATE rooms SET summary_enabled = 0 WHERE id = ? AND summary_enabled = 1';
+
+export type AutoDisableReason = 'idle-no-connections' | 'no-members';
+
+// 只用到 D1 的一小片面：单测不必构造完整 D1Database，真实调用方直接传 env.DB 即可。
+export interface SummaryGateDb {
+  prepare(sql: string): {
+    bind(...values: unknown[]): { run(): Promise<{ meta?: { changes?: number } | undefined }> };
+  };
+}
+
+// 返回受影响行数：1 = 本次把开关从 1 关到 0；0 = 本来就是关的（或房间不存在）。两种都留痕，禁静默。
+export async function disableSummaryForRoom(
+  db: SummaryGateDb,
+  roomId: string,
+  reason: AutoDisableReason
+): Promise<number> {
+  const r = await db.prepare(DISABLE_SUMMARY_SQL).bind(roomId).run();
+  const changes = r.meta?.changes ?? 0;
+  console.info(
+    `[summary] auto-disable room=${roomId} reason=${reason} changes=${changes}` +
+      (changes ? '' : '（开关本就是关的或房间不存在，未写库）')
+  );
+  return changes;
 }
 
 async function notifySummary(

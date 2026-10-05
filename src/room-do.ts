@@ -1,5 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
 import { verifyToken } from './utils/auth';
+import { disableSummaryForRoom } from './api/summarize';
+
+// 房间没人（页面 WebSocket 全断）就自动关掉事件摘要：没人在跑团时不该继续每 2 分钟烧水位查询和 AI 花费。
+// 宽限期防「刷新页面」误关：刷新是先断旧连接再建新连接，新连接会把这个 alarm 取消掉。
+export const AUTO_DISABLE_GRACE_MS = 120_000;
+// alarm 可能唤醒一个被驱逐后重建的实例（内存里的 roomId / sessions 全没了），所以 roomId 必须落 DO 存储。
+const ROOM_ID_STORAGE_KEY = 'roomId';
 
 interface Env {
   DB: D1Database;
@@ -122,6 +129,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     const session: Session = { userId, characterId, ws: server };
     this.sessions.set(server, session);
 
+    // 有人回来了：取消「最后一个连接断开」时排下的自动关闭（刷新页面也走这条路，不会被误关）
+    await this.cancelSummaryAutoDisable();
+
     // 监听消息
     server.addEventListener('message', (event) => {
       this.handleMessage(server, event.data as string).catch((err) => {
@@ -132,12 +142,12 @@ export class RoomDurableObject extends DurableObject<Env> {
 
     // 监听关闭
     server.addEventListener('close', () => {
-      this.sessions.delete(server);
+      this.removeSession(server, 'close');
     });
 
     // 监听错误
     server.addEventListener('error', () => {
-      this.sessions.delete(server);
+      this.removeSession(server, 'error');
     });
 
     // 连接成功后发送初始房间数据
@@ -149,6 +159,79 @@ export class RoomDurableObject extends DurableObject<Env> {
       status: 101,
       webSocket: client,
     });
+  }
+
+  // ==================== 房间没人时自动关闭摘要开关 ====================
+
+  // 摘掉一个连接。只有「真的摘掉了最后一个」才排 alarm：close 和 error 可能对同一个 socket 先后触发，
+  // 第二次 delete 返回 false，据此避免重复排 alarm / 重复打日志。
+  private removeSession(ws: WebSocket, why: 'close' | 'error') {
+    if (!this.sessions.delete(ws)) return;
+    if (this.sessions.size > 0) return;
+    void this.scheduleSummaryAutoDisable(why);
+  }
+
+  private async scheduleSummaryAutoDisable(why: 'close' | 'error') {
+    const roomId = this.roomId;
+    if (!roomId) {
+      // 定位不到房间就没法关开关：响亮失败（禁静默），alarm 路径里也会再报一次
+      console.error('[summary] idle-guard 排定失败：roomId 未知（该连接没有经 fetch 注入 X-Room-Id）');
+      return;
+    }
+    const fireAt = Date.now() + AUTO_DISABLE_GRACE_MS;
+    try {
+      await this.ctx.storage.put(ROOM_ID_STORAGE_KEY, roomId);
+      await this.ctx.storage.setAlarm(fireAt);
+      console.info(
+        `[summary] idle-guard room=${roomId} 最后一个连接断开（${why}），` +
+          `${AUTO_DISABLE_GRACE_MS / 1000}s 后若仍无连接则关闭摘要开关 alarmAt=${new Date(fireAt).toISOString()}`
+      );
+    } catch (e) {
+      console.error(
+        `[summary] idle-guard-schedule-failed room=${roomId} err=${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  private async cancelSummaryAutoDisable() {
+    const roomId = this.roomId;
+    try {
+      const pending = await this.ctx.storage.getAlarm();
+      await this.ctx.storage.deleteAlarm();
+      console.info(
+        `[summary] idle-guard room=${roomId} 新连接建立 sessions=${this.sessions.size}，` +
+          (pending
+            ? `取消待执行的自动关闭（原定 ${new Date(pending).toISOString()}）`
+            : '当前没有待执行的自动关闭')
+      );
+    } catch (e) {
+      // 取消失败不影响连接本身；alarm() 里还会再查一次 sessions，有人就什么都不做
+      console.error(
+        `[summary] idle-guard-cancel-failed room=${roomId} err=${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  // DO alarm：最后一个连接断开 AUTO_DISABLE_GRACE_MS 之后触发。
+  // sessions 是内存态，而 alarm 会唤醒「被驱逐后重建」的实例 —— 此时 sessions 为空即视为确实没人。
+  // 不广播：这条路径的前提就是房内一个连接都没有，广播给空集合没有意义。
+  async alarm(): Promise<void> {
+    const roomId = (await this.ctx.storage.get<string>(ROOM_ID_STORAGE_KEY)) || this.roomId;
+    if (this.sessions.size > 0) {
+      console.info(
+        `[summary] idle-guard room=${roomId} alarm 触发但仍有 ${this.sessions.size} 个连接（有人回来了），保留摘要开关、未写库`
+      );
+      return;
+    }
+    if (!roomId) {
+      console.error(
+        '[summary] auto-disable skipped reason=room-id-unknown（DO 存储与内存里都没有 roomId，无法定位房间）'
+      );
+      return;
+    }
+    // 日志由 disableSummaryForRoom 统一打：[summary] auto-disable room=X reason=idle-no-connections changes=1|0
+    // （changes=0 = 开关本就是关的 / 房间已销毁，同样有一行，不静默）
+    await disableSummaryForRoom(this.env.DB, roomId, 'idle-no-connections');
   }
 
   private async sendInitialData(ws: WebSocket, userId: string, characterId: string) {

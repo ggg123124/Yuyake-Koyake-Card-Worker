@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth';
 import { verifyToken } from '../utils/auth';
 import { Bindings, Variables } from '../types';
 import { archiveAndDeleteRoom } from './archives';
+import { disableSummaryForRoom } from './summarize';
 import { validRoomCode, strLen } from '../utils/validate';
 import { generateRoomCode, pickUniqueRoomCode } from '../utils/roomCode';
 
@@ -398,6 +399,16 @@ route.post('/:code/leave', authMiddleware, async (c) => {
     .prepare('DELETE FROM room_members WHERE room_id = ? AND character_id = ?')
     .bind(roomId, characterId)
     .run();
+
+  // 防御性兜底：房间一个成员都不剩就顺手关掉摘要开关（没人在跑团，摘要链路不该继续烧钱）。
+  // 正常流程走不到这里 —— 上面已经拦住了「最后一个 GM 离开」，而 GM 必然是成员 —— 但要求全覆盖、不静默。
+  const remaining = await db
+    .prepare('SELECT COUNT(*) AS n FROM room_members WHERE room_id = ?')
+    .bind(roomId)
+    .first<{ n: number }>();
+  if ((remaining?.n ?? 0) === 0) {
+    await disableSummaryForRoom(db, roomId, 'no-members');
+  }
 
   await db
     .prepare("UPDATE rooms SET last_active_at = datetime('now') WHERE id = ?")
