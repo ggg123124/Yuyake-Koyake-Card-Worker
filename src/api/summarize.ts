@@ -32,6 +32,13 @@ export const WATERMARK_PIN_MAX_LAG_MS = 600_000; // 水位落后墙钟超过 10 
 export const MAX_WINDOW_MS = 300_000; // 单条摘要最长覆盖 5 分钟（本次事故出现过 75 分钟的超长窗口）
 export const TAIL_WINDOW_MS = 15_000; // 全部会话已结束时，允许用一小段收尾窗口把最后素材收掉
 
+// —— 积压追补（catchUp）相关常量 ——
+// 2026-10-05：房间 SVS3C 的锚点停在 10-01，素材水位已到 10-05，中间 1103 条语音段从未被覆盖。
+// 单窗口一次只能推进 5 分钟，靠 cron 每 2 分钟一轮要跑上百轮才补得完，故 cron 走的 catchUp
+// 模式在一次调用里连续推进多个窗口；上限既要防单次调用过长（cron 周期 2 分钟），也要防 AI 花费失控。
+export const MAX_WINDOWS_PER_RUN = 6; // catchUp 单次调用最多追补的窗口数
+export const CATCH_UP_BUDGET_MS = 45_000; // catchUp 累计耗时上限
+
 export interface SessionWatermarkRow {
   status: string;
   maxAbsEndMs: number | null;
@@ -80,46 +87,43 @@ export interface WindowInput {
   lastEndMs: number | null; // 上一条摘要的 end_ms
   watermark: number; // 素材水位（pickWatermark 结果，非 null）
   hasRecordingSession: boolean; // 房间里是否仍有 status='recording' 的会话
+  nextMaterialStartMs: number | null; // 锚点之后下一条素材的 abs_start_ms（无则 null）
 }
 export interface WindowResult {
   startMs: number;
   endMs: number;
   skip: 'too-soon' | null;
-  // 锚点前移留痕：true = startMs 被从 lastEndMs 强行推到 watermark 附近，中间那段时间不再被任何摘要覆盖
-  jumped: boolean;
-  skippedMs: number;
+  // 起点落到下一条素材时跨过的「空档」毫秒数（该区间内没有任何素材，素材本身一条都没被跳过）
+  gapSkippedMs: number;
 }
 
-// 纯函数：由「上一条摘要 end_ms + 素材水位」算出本条摘要窗口，便于单测。
+// 纯函数：由「上一条摘要 end_ms + 素材水位 + 下一条素材起点」算出本条摘要窗口，便于单测。
 export function computeWindow(inp: WindowInput): WindowResult {
-  const { lastEndMs, watermark, hasRecordingSession } = inp;
+  const { lastEndMs, watermark, hasRecordingSession, nextMaterialStartMs } = inp;
   let startMs = lastEndMs ?? Math.max(0, watermark - WINDOW_MS);
 
-  // 锚点前移（2026-10-01 房间 SVS3C「4 天 0 摘要」死锁的修法）：
-  // 下面 endMs = min(watermark, startMs + MAX_WINDOW_MS)，所以一旦锚点落后到
-  // startMs + MAX_WINDOW_MS < watermark - WINDOW_MS（即落后超过 MAX_WINDOW_MS + WINDOW_MS = 7 分钟），
-  // 窗口就永远只能是 [lastEnd, lastEnd + 5min) 这段「陈旧切片」：切片里没素材 ⇒ 生成不了摘要 ⇒
+  // 锚点落后时的死锁修法（2026-10-01 房间 SVS3C「4 天 0 摘要」）：
+  // 下面 endMs = min(watermark, startMs + MAX_WINDOW_MS)，所以锚点一旦落后超过 MAX_WINDOW_MS，
+  // 窗口就永远只是 [lastEnd, lastEnd + 5min) 这段陈旧切片；切片里没素材 ⇒ 生成不了摘要 ⇒
   // 锚点永远推不动 ⇒ 之后所有素材都进不了摘要（实测该房 1103 条语音段全部漏掉）。
-  // 故把 startMs 前移到 watermark - MAX_WINDOW_MS：窗口必定盖住最近的素材，且 span 恰为 MAX_WINDOW_MS
-  // （≥ WINDOW_MS），不会再判 too-soon。代价是跳过的那段时间不再被覆盖 —— 属可观测的取舍，
-  // 由 maybeSummarize 拿 jumped/skippedMs 去 WARN（本函数是纯函数，禁止在这里打日志）。
-  let jumped = false;
-  let skippedMs = 0;
-  if (startMs + MAX_WINDOW_MS < watermark - WINDOW_MS) {
-    const jumpedTo = watermark - MAX_WINDOW_MS;
-    skippedMs = jumpedTo - startMs;
-    startMs = jumpedTo;
-    jumped = true;
+  // 修法是把起点「落到锚点之后的第一条素材上」：空档（无素材的静默期）被跨过，
+  // 但积压素材一条都不会丢，配合 maybeSummarize 的 catchUp 循环可逐窗把积压补完。
+  let gapSkippedMs = 0;
+  if (nextMaterialStartMs != null && nextMaterialStartMs > startMs) {
+    gapSkippedMs = nextMaterialStartMs - startMs;
+    startMs = nextMaterialStartMs;
   }
 
   // 单条摘要最长覆盖 MAX_WINDOW_MS（事故里出现过 75 分钟超长窗口 → 模型只能空泛复读前情提要）
-  const endMs = Math.min(watermark, startMs + MAX_WINDOW_MS);
+  // clamp：nextMaterialStartMs 取自水位之前的素材，正常不会越过 watermark；万一越过（或锚点本身
+  // 已越过水位），按零长窗口走 too-soon，不产出 endMs < startMs 的负长度窗口。
+  const endMs = Math.max(startMs, Math.min(watermark, startMs + MAX_WINDOW_MS));
   const span = endMs - startMs;
   // 仍在录音：窗口不足 WINDOW_MS 就等下一轮（too-soon）；
   // 全部 done：允许用 TAIL_WINDOW_MS 的收尾窗口把最后素材收掉，否则停录后的末段会被永久留在库外。
   const minSpan = hasRecordingSession ? WINDOW_MS : TAIL_WINDOW_MS;
-  if (span < minSpan) return { startMs, endMs, skip: 'too-soon', jumped, skippedMs };
-  return { startMs, endMs, skip: null, jumped, skippedMs };
+  if (span < minSpan) return { startMs, endMs, skip: 'too-soon', gapSkippedMs };
+  return { startMs, endMs, skip: null, gapSkippedMs };
 }
 
 const RES_LABEL: Record<string, string> = { dream: '梦点', feeling: '心意点', wonder: '奇迹点' };
@@ -211,6 +215,8 @@ export interface SummarizeResult {
   logs?: number;
   latencyMs?: number;
   error?: string;
+  windows?: number; // 本次调用落库的摘要条数（非 catchUp 模式恒为 0 或 1）
+  remainingMs?: number; // 水位 - 新锚点：还剩多少毫秒素材没被摘要覆盖（巡检用）
 }
 
 // 模型偶尔会带  thinking 或代码块包裹，清掉再入库
@@ -245,15 +251,21 @@ async function notifySummary(
 }
 
 /**
- * 尝试为房间生成一条事件摘要。
- * 幂等设计：窗口起点取「上一条摘要的 end_ms」，并发触发时会算出同一个 start_ms，
- * 由 room_summaries(room_id, start_ms) 唯一索引挡掉重复（INSERT OR IGNORE + changes 判定）。
+ * 尝试为房间生成事件摘要。
+ * 幂等设计：窗口起点取「上一条摘要的 end_ms」（或锚点之后第一条素材的起点），并发触发时会算出
+ * 同一个 start_ms，由 room_summaries(room_id, start_ms) 唯一索引挡掉重复（INSERT OR IGNORE + changes 判定）。
+ *
+ * catchUp=true（cron sweep 用）：锚点落后很多时沿素材逐窗追补，一次调用最多推进 MAX_WINDOWS_PER_RUN 个窗口。
+ * 非 catchUp（前端催 / 手动 /summaries/run）保持单窗口 —— 多客户端同时催时循环会让它们重复劳动。
  */
-export async function maybeSummarize(env: Bindings, roomId: string): Promise<SummarizeResult> {
+export async function maybeSummarize(
+  env: Bindings,
+  roomId: string,
+  opts?: { catchUp?: boolean }
+): Promise<SummarizeResult> {
   const db = env.DB;
-  const now = Date.now();
 
-  // 门控必须是第一件事：下面两条水位查询跑在 skip 判定之前，即使一条摘要都不生成也要烧掉数千行读量，
+  // 门控必须是第一件事：下面的水位查询跑在 skip 判定之前，即使一条摘要都不生成也要烧掉数千行读量，
   // 所以开关关着时连它们都不能执行。这里只花 1 行（rooms 主键读）。
   // 房间不存在时 gate 为 null，同样按「未开启」短路 —— 但日志如实区分，不静默当成关。
   const gate = await db
@@ -266,14 +278,86 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
         gate ? gate.summary_enabled : '房间不存在'
       }（GM 可在房间面板开启；本次未做水位/素材查询、未调 AI）`
     );
-    return { ok: true, skipped: 'disabled' };
+    return { ok: true, skipped: 'disabled', windows: 0 };
   }
+
+  const catchUp = opts?.catchUp === true;
+  const runT0 = Date.now();
+  let windows = 0;
+  let remainingMs: number | undefined;
+  let lastResult: SummarizeResult = { ok: true, skipped: 'not-run' };
+
+  for (let i = 1; i <= MAX_WINDOWS_PER_RUN; i++) {
+    const a = await summarizeOneWindow(env, roomId);
+    lastResult = a.result;
+    if (a.watermarkMs !== null && a.anchorMs !== null) {
+      remainingMs = Math.max(0, a.watermarkMs - a.anchorMs);
+    }
+    if (catchUp) {
+      console.info(
+        `[summary] catch-up room=${roomId} window=${i} start=${a.startMs ?? '-'} end=${a.endMs ?? '-'} ` +
+          `segs=${a.result.segments ?? 0} logs=${a.result.logs ?? 0} gapSkippedMs=${a.gapSkippedMs}`
+      );
+    }
+    // 未落库（skip 或出错）⇒ 锚点没动，再跑一轮只会算出同一个窗口，必须停（否则空转到窗口上限）
+    if (!a.landed) break;
+    windows++;
+    if (!catchUp) break;
+    const elapsed = Date.now() - runT0;
+    if (elapsed >= CATCH_UP_BUDGET_MS) {
+      console.info(`[summary] catch-up budget-stop room=${roomId} elapsed=${elapsed}ms 已用满 ${CATCH_UP_BUDGET_MS}ms`);
+      break;
+    }
+  }
+
+  if (catchUp) {
+    console.info(
+      `[summary] catch-up done room=${roomId} windows=${windows} remainingMs=${remainingMs ?? '-'}`
+    );
+  }
+  return { ...lastResult, windows, remainingMs };
+}
+
+interface WindowAttempt {
+  result: SummarizeResult;
+  // 本轮是否真落库了一条摘要。未落库 ⇒ 锚点没动 ⇒ catchUp 循环必须停。
+  landed: boolean;
+  anchorMs: number | null; // 本轮结束后的锚点（落库 = endMs，否则 = 原 lastEndMs）
+  watermarkMs: number | null; // 本轮读到的素材水位（算 remainingMs 用；无素材时为 null）
+  startMs: number | null;
+  endMs: number | null;
+  gapSkippedMs: number;
+}
+
+// 生成「一条」摘要。门控（summary_enabled）已由 maybeSummarize 在循环外把过，这里不重复读 rooms。
+async function summarizeOneWindow(env: Bindings, roomId: string): Promise<WindowAttempt> {
+  const db = env.DB;
+  const now = Date.now();
 
   const last = await db
     .prepare('SELECT end_ms FROM room_summaries WHERE room_id = ? ORDER BY end_ms DESC LIMIT 1')
     .bind(roomId)
     .first<{ end_ms: number }>();
   const lastEndMs = last?.end_ms ?? null;
+
+  // 未落库的统一出口：锚点仍是 lastEndMs（没动过）
+  const stalled = (
+    result: SummarizeResult,
+    meta: {
+      watermarkMs?: number | null;
+      startMs?: number | null;
+      endMs?: number | null;
+      gapSkippedMs?: number;
+    } = {}
+  ): WindowAttempt => ({
+    result,
+    landed: false,
+    anchorMs: lastEndMs,
+    watermarkMs: meta.watermarkMs ?? null,
+    startMs: meta.startMs ?? null,
+    endMs: meta.endMs ?? null,
+    gapSkippedMs: meta.gapSkippedMs ?? 0,
+  });
 
   // 素材水位（房间维度）：已入库语音段的最大 abs_end_ms。
   // SQL 不变，靠新索引 idx_ts_segments_room_end (room_id, abs_end_ms) 让 SQLite 直接取索引末端，
@@ -316,15 +400,41 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
     console.info(
       `[summary] skip room=${roomId} reason=not-enough-material 无素材水位 segMax=${segMaxAbsEndMs} recordingSessions=${sessRows.length}`
     );
-    return { ok: true, skipped: 'not-enough-material' };
+    return stalled({ ok: true, skipped: 'not-enough-material' });
   }
 
-  const win = computeWindow({ lastEndMs, watermark, hasRecordingSession });
-  if (win.jumped) {
-    // 锚点前移必须留痕（禁静默）：被跳过的那段时间不会再被任何摘要覆盖
+  // 锚点之后「下一条素材」的起点：窗口起点要落到素材上，而不是停在无素材的空档里
+  // （空档里的窗口既生成不了摘要、又推不动锚点 —— 正是 4 天死锁的成因）。
+  // 条件用 abs_end_ms > 锚点而非 abs_start_ms > 锚点：与锚点尾部重叠的那条段不该被跳过。
+  // 走索引 idx_ts_segments_room_end (room_id, abs_end_ms)，只取索引末端一次聚合。
+  const nextMat = await db
+    .prepare(
+      `SELECT MIN(abs_start_ms) AS mn FROM transcript_segments
+        WHERE room_id = ? AND abs_end_ms > ?`
+    )
+    .bind(roomId, lastEndMs ?? 0)
+    .first<{ mn: number | null }>();
+  const nextMaterialStartMs = nextMat?.mn ?? null;
+  if (nextMaterialStartMs === null && lastEndMs !== null) {
+    // 锚点之后确实一条素材都没有：积压已补完（或本就没新素材），没什么可生成 —— 留痕不静默
+    console.info(
+      `[summary] skip room=${roomId} reason=not-enough-material 锚点之后无新素材 lastEndMs=${lastEndMs} watermark=${watermark}`
+    );
+    return stalled({ ok: true, skipped: 'not-enough-material' }, { watermarkMs: watermark });
+  }
+
+  const win = computeWindow({ lastEndMs, watermark, hasRecordingSession, nextMaterialStartMs });
+  const winMeta = {
+    watermarkMs: watermark,
+    startMs: win.startMs,
+    endMs: win.endMs,
+    gapSkippedMs: win.gapSkippedMs,
+  };
+  if (win.gapSkippedMs > 0) {
+    // 跨过空档必须留痕（禁静默）。注意跨过的是「一条素材都没有的静默期」，素材本身没有被跳过。
     console.warn(
-      `[summary] anchor-jump room=${roomId} 摘要锚点严重落后已前移 lastEndMs=${lastEndMs} watermark=${watermark} ` +
-        `新起点=${win.startMs} 跳过=${Math.round(win.skippedMs / 1000)}s（约 ${(win.skippedMs / 60000).toFixed(1)} 分钟素材不再有摘要覆盖）`
+      `[summary] gap-skip room=${roomId} 窗口起点落到下一条素材 lastEndMs=${lastEndMs} 新起点=${win.startMs} ` +
+        `跨过空档=${Math.round(win.gapSkippedMs / 1000)}s（约 ${(win.gapSkippedMs / 60000).toFixed(1)} 分钟无素材，未丢素材）`
     );
   }
   if (win.skip) {
@@ -334,7 +444,7 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
         hasRecordingSession ? WINDOW_MS : TAIL_WINDOW_MS
       }ms watermark=${watermark} pinned=${pinned} 水位落后墙钟=${lagMs}ms`
     );
-    return { ok: true, skipped: win.skip };
+    return stalled({ ok: true, skipped: win.skip }, winMeta);
   }
 
   const startMs = win.startMs;
@@ -369,9 +479,10 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
 
   if (segs.length < MIN_SEGMENTS && logs.length === 0) {
     console.info(
-      `[summary] skip room=${roomId} reason=not-enough-material segs=${segs.length} logs=${logs.length}`
+      `[summary] skip room=${roomId} reason=not-enough-material segs=${segs.length} logs=${logs.length} ` +
+        `window=[${startMs},${endMs}) 下一条素材=${nextMaterialStartMs}`
     );
-    return { ok: true, skipped: 'not-enough-material' };
+    return stalled({ ok: true, skipped: 'not-enough-material' }, winMeta);
   }
 
   // ③ 玩家角色名单 —— 明确告诉模型「这些是玩家角色」，避免把角色名当成 NPC
@@ -421,7 +532,7 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[summary] ai-failed room=${roomId} err=${msg}`);
-    return { ok: false, error: msg };
+    return stalled({ ok: false, error: msg }, winMeta);
   }
   const latencyMs = Date.now() - t0;
 
@@ -435,7 +546,7 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   const summary = cleanSummary(String(raw));
   if (!summary) {
     console.warn(`[summary] empty-summary room=${roomId} latency=${latencyMs}ms`);
-    return { ok: false, error: 'empty-summary' };
+    return stalled({ ok: false, error: 'empty-summary' }, winMeta);
   }
 
   // 并发防护：waitUntil 自动触发与手动触发可能同时执行，两者都读到「还没有上一条」
@@ -476,14 +587,23 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   // changes=0 = 窗口已被并发请求占用（或撞上唯一索引）
   if (!ins.meta?.changes) {
     console.info(`[summary] 跳过：窗口已被并发请求占用 room=${roomId} startMs=${startMs}`);
-    return { ok: true, skipped: 'concurrent-window' as const };
+    return stalled({ ok: true, skipped: 'concurrent-window' as const }, winMeta);
   }
 
   console.info(
-    `[summary] ok room=${roomId} segs=${segs.length} logs=${logs.length} latency=${latencyMs}ms chars=${summary.length}`
+    `[summary] ok room=${roomId} segs=${segs.length} logs=${logs.length} latency=${latencyMs}ms chars=${summary.length} ` +
+      `window=[${startMs},${endMs}) 锚点推进=${endMs - (lastEndMs ?? startMs)}ms`
   );
 
   await notifySummary(env, roomId, { id, startMs, endMs, summary });
 
-  return { ok: true, summaryId: id, summary, segments: segs.length, logs: logs.length, latencyMs };
+  return {
+    result: { ok: true, summaryId: id, summary, segments: segs.length, logs: logs.length, latencyMs },
+    landed: true,
+    anchorMs: endMs,
+    watermarkMs: watermark,
+    startMs,
+    endMs,
+    gapSkippedMs: win.gapSkippedMs,
+  };
 }

@@ -12,7 +12,7 @@ import {
 
 // 纯函数单测：不连网、不碰 DB。
 // 覆盖 pickWatermark 的五类场景 + computeWindow 的窗口边界（too-soon / 截断 / 收尾）
-// + 锚点前移（2026-10-01 房间 SVS3C「4 天 0 摘要」死锁的修法）。
+// + 「起点落到下一条素材」（2026-10-05 把上一轮的「锚点前移跳过积压」换成「沿素材逐窗追补」）。
 
 // 把 epoch ms 格式化成 SQLite datetime('now') 文本（UTC，'YYYY-MM-DD HH:MM:SS'）
 function utcSql(ms: number): string {
@@ -90,61 +90,111 @@ describe('pickWatermark：素材水位', () => {
 
 describe('computeWindow：窗口边界', () => {
   it('span < WINDOW_MS（仍在录音）→ skip=too-soon', () => {
-    const r = computeWindow({ lastEndMs: NOW - 50_000, watermark: NOW, hasRecordingSession: true });
+    const r = computeWindow({
+      lastEndMs: NOW - 50_000,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: null,
+    });
     console.log('[window] too-soon →', JSON.stringify(r), 'span=', r.endMs - r.startMs);
     expect(r.startMs).toBe(NOW - 50_000);
     expect(r.endMs).toBe(NOW);
     expect(r.endMs - r.startMs).toBe(50_000);
     expect(r.skip).toBe('too-soon');
-    expect(r.jumped).toBe(false);
-    expect(r.skippedMs).toBe(0);
+    expect(r.gapSkippedMs).toBe(0);
   });
 
-  // 落后 400s：超过 MAX_WINDOW_MS（300s）需要截断，但未达到前移阈值 MAX_WINDOW_MS + WINDOW_MS = 420s。
-  // ⚠️ 本用例原先写的是落后 500s —— 那正好落进本轮修掉的死锁区间（>420s 时锚点必须前移），
-  //    它断言的「startMs 永远停在 500s 前」就是事故行为本身，故改为 400s 以保留纯粹的「截断」语义。
-  it('MAX_WINDOW_MS < 落后量 ≤ 前移阈值 → 截断到 MAX_WINDOW_MS，不前移', () => {
-    const r = computeWindow({ lastEndMs: NOW - 400_000, watermark: NOW, hasRecordingSession: true });
+  // 落后 400s：超过 MAX_WINDOW_MS（300s）需要截断。起点仍在锚点上（下一条素材不晚于锚点），
+  // 所以这一轮覆盖的是锚点之后那段连续素材，不会跨过任何东西。
+  it('落后量 > MAX_WINDOW_MS → 截断到 MAX_WINDOW_MS，起点仍是锚点', () => {
+    const r = computeWindow({
+      lastEndMs: NOW - 400_000,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: null,
+    });
     console.log('[window] 截断 →', JSON.stringify(r), 'span=', r.endMs - r.startMs);
     expect(r.startMs).toBe(NOW - 400_000);
     expect(r.endMs).toBe(NOW - 100_000);
     expect(r.endMs - r.startMs).toBe(MAX_WINDOW_MS);
     expect(r.skip).toBeNull();
-    expect(r.jumped).toBe(false);
-    expect(r.skippedMs).toBe(0);
+    expect(r.gapSkippedMs).toBe(0);
   });
 
   it('首次摘要（lastEndMs=null）→ start = watermark - WINDOW_MS，正好一个窗口', () => {
-    const r = computeWindow({ lastEndMs: null, watermark: NOW, hasRecordingSession: true });
+    const r = computeWindow({
+      lastEndMs: null,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: null,
+    });
     console.log('[window] 首次 →', JSON.stringify(r), 'span=', r.endMs - r.startMs);
     expect(r.startMs).toBe(NOW - WINDOW_MS);
     expect(r.endMs).toBe(NOW);
     expect(r.endMs - r.startMs).toBe(WINDOW_MS);
     expect(r.skip).toBeNull();
-    expect(r.jumped).toBe(false);
+    expect(r.gapSkippedMs).toBe(0);
   });
 
   it('全部 done 且 span ≥ TAIL_WINDOW_MS → 收口（不 skip），把停录后的末段素材收掉', () => {
-    const r = computeWindow({ lastEndMs: NOW - 20_000, watermark: NOW, hasRecordingSession: false });
+    const r = computeWindow({
+      lastEndMs: NOW - 20_000,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: null,
+    });
     console.log('[window] 收尾收口 →', JSON.stringify(r), 'span=', r.endMs - r.startMs);
     expect(r.endMs - r.startMs).toBe(20_000);
     expect(r.skip).toBeNull();
-    expect(r.jumped).toBe(false);
+    expect(r.gapSkippedMs).toBe(0);
   });
 
   it('全部 done 但 span < TAIL_WINDOW_MS → 仍 skip=too-soon', () => {
-    const r = computeWindow({ lastEndMs: NOW - 10_000, watermark: NOW, hasRecordingSession: false });
+    const r = computeWindow({
+      lastEndMs: NOW - 10_000,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: null,
+    });
     console.log('[window] 收尾不足 →', JSON.stringify(r), 'span=', r.endMs - r.startMs);
     expect(r.skip).toBe('too-soon');
-    expect(r.jumped).toBe(false);
+    expect(r.gapSkippedMs).toBe(0);
   });
 
   it('对照：同样 span=20s，录音中 skip、全 done 收口（体现 TAIL_WINDOW 例外）', () => {
-    const recording = computeWindow({ lastEndMs: NOW - 20_000, watermark: NOW, hasRecordingSession: true });
-    const done = computeWindow({ lastEndMs: NOW - 20_000, watermark: NOW, hasRecordingSession: false });
+    const recording = computeWindow({
+      lastEndMs: NOW - 20_000,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: null,
+    });
+    const done = computeWindow({
+      lastEndMs: NOW - 20_000,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: null,
+    });
     console.log('[window] 对照 recording=', JSON.stringify(recording), 'done=', JSON.stringify(done));
     expect(recording.skip).toBe('too-soon');
     expect(done.skip).toBeNull();
+  });
+
+  // nextMaterialStartMs 是本轮新增入参：为 null 时必须与旧版完全一致（起点仍是锚点），
+  // 否则「没有更晚素材」的常见路径会被这次改动带偏。
+  it('nextMaterialStartMs=null → 起点仍是 lastEndMs、gapSkippedMs=0（与旧版行为一致）', () => {
+    for (const lag of [0, 50_000, 400_000, 4 * 24 * 3600 * 1000]) {
+      for (const rec of [true, false]) {
+        const r = computeWindow({
+          lastEndMs: NOW - lag,
+          watermark: NOW,
+          hasRecordingSession: rec,
+          nextMaterialStartMs: null,
+        });
+        expect(r.startMs).toBe(NOW - lag);
+        expect(r.gapSkippedMs).toBe(0);
+        expect(r.endMs).toBe(Math.min(NOW, NOW - lag + MAX_WINDOW_MS));
+      }
+    }
   });
 });
 
@@ -152,77 +202,234 @@ describe('computeWindow：窗口边界', () => {
 // 根因：endMs = min(watermark, startMs + MAX_WINDOW_MS)，startMs = lastEndMs。
 // 当 lastEndMs 落后 watermark 超过 MAX_WINDOW_MS 时，窗口永远只能是 [lastEnd, lastEnd+5min) 那段陈旧切片；
 // 切片里没素材 ⇒ 判 not-enough-material ⇒ 摘要不落库 ⇒ lastEndMs 推不动 ⇒ 下一轮算出同一个窗口 ⇒ 死锁。
-describe('computeWindow：锚点前移（死锁修法）', () => {
+// 本轮修法：起点「落到锚点之后的第一条素材」上（nextMaterialStartMs），空档被跨过但素材一条不丢，
+// 再由 maybeSummarize({catchUp:true}) 逐窗把积压补完。上一轮的「锚点前移」会把积压素材整段丢掉，已删除。
+describe('computeWindow：起点落到下一条素材（死锁修法）', () => {
   const FOUR_DAYS = 4 * 24 * 3600 * 1000;
-  const JUMP_THRESHOLD = MAX_WINDOW_MS + WINDOW_MS; // 落后超过这个量才前移
 
-  it('事故复现：锚点落后 4 天 + 陈旧切片无素材 → 前移到 watermark-5min，窗口盖住最近素材且不再 skip', () => {
+  it('事故场景：锚点落后 4 天 + 下一条素材在水位前 30s → 起点落到素材上，跨过空档但不跳素材', () => {
     const lastEnd = NOW - FOUR_DAYS;
+    const nextMat = NOW - 30_000;
     // 旧行为下窗口只会是 [lastEnd, lastEnd+5min)，远在水位之前（正是那段 0 素材的死区间）
     expect(lastEnd + MAX_WINDOW_MS).toBeLessThan(NOW - WINDOW_MS);
 
-    const r = computeWindow({ lastEndMs: lastEnd, watermark: NOW, hasRecordingSession: true });
-    console.log('[window] 锚点前移 →', JSON.stringify(r), 'skippedMs=', r.skippedMs);
-    expect(r.jumped).toBe(true);
-    expect(r.startMs).toBe(NOW - MAX_WINDOW_MS); // 窗口右端贴着水位，必定覆盖最近到库的素材
-    expect(r.endMs).toBe(NOW);
-    expect(r.endMs - r.startMs).toBe(MAX_WINDOW_MS);
+    const r = computeWindow({
+      lastEndMs: lastEnd,
+      watermark: NOW,
+      hasRecordingSession: false, // 4 天前的团早停了：全 done ⇒ minSpan = TAIL_WINDOW_MS
+      nextMaterialStartMs: nextMat,
+    });
+    console.log('[window] 落到素材 →', JSON.stringify(r), 'gapSkippedMs=', r.gapSkippedMs);
+    expect(r.startMs).toBe(nextMat); // 起点就是那条素材本身
+    expect(r.endMs).toBe(NOW); // = watermark
     expect(r.skip).toBeNull(); // 关键：不再永久 too-soon / not-enough-material
-    expect(r.skippedMs).toBe(NOW - MAX_WINDOW_MS - lastEnd);
+    expect(r.gapSkippedMs).toBe(nextMat - lastEnd);
+    // 素材没有被跳过：它落在窗口 [startMs, endMs) 内，一定会被这一轮的素材查询取到
+    expect(nextMat).toBeGreaterThanOrEqual(r.startMs);
+    expect(nextMat).toBeLessThan(r.endMs);
   });
 
-  it('前移后锚点能持续推进：用上一轮的 endMs 再算一次 → 不再前移，正常按窗口滚动', () => {
-    const first = computeWindow({ lastEndMs: NOW - FOUR_DAYS, watermark: NOW, hasRecordingSession: true });
+  it('同样场景但仍有会话在录音 → span=30s < WINDOW_MS，仍按原语义 skip=too-soon（minSpan 未变）', () => {
+    const lastEnd = NOW - FOUR_DAYS;
+    const nextMat = NOW - 30_000;
+    const r = computeWindow({
+      lastEndMs: lastEnd,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: nextMat,
+    });
+    console.log('[window] 落到素材但录音中 →', JSON.stringify(r));
+    expect(r.startMs).toBe(nextMat);
+    expect(r.skip).toBe('too-soon');
+    expect(r.gapSkippedMs).toBe(nextMat - lastEnd);
+  });
+
+  it('下一条素材不晚于锚点（与锚点尾部重叠）→ 起点不动、gapSkippedMs=0', () => {
+    const r = computeWindow({
+      lastEndMs: NOW - 400_000,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: NOW - 400_500, // 该段 abs_end_ms 越过锚点，但起点在锚点之前
+    });
+    console.log('[window] 重叠素材 →', JSON.stringify(r));
+    expect(r.startMs).toBe(NOW - 400_000);
+    expect(r.gapSkippedMs).toBe(0);
+    expect(r.endMs).toBe(NOW - 100_000); // startMs + MAX_WINDOW_MS
+    expect(r.skip).toBeNull();
+  });
+
+  it('下一条素材恰好贴在水位上 → span=0，too-soon（不是负长度窗口）', () => {
+    const r = computeWindow({
+      lastEndMs: NOW - FOUR_DAYS,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: NOW,
+    });
+    console.log('[window] 素材贴水位 →', JSON.stringify(r));
+    expect(r.startMs).toBe(NOW);
+    expect(r.endMs).toBe(NOW);
+    expect(r.endMs - r.startMs).toBe(0);
+    expect(r.skip).toBe('too-soon');
+  });
+
+  it('边界：nextMaterialStartMs 越过水位（不应发生）→ clamp 成零长窗口，绝不产出 endMs < startMs', () => {
+    const r = computeWindow({
+      lastEndMs: NOW - FOUR_DAYS,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: NOW + 60_000,
+    });
+    console.log('[window] 素材越过水位 →', JSON.stringify(r));
+    expect(r.startMs).toBe(NOW + 60_000);
+    expect(r.endMs).toBe(r.startMs);
+    expect(r.endMs - r.startMs).toBeGreaterThanOrEqual(0);
+    expect(r.skip).toBe('too-soon');
+  });
+
+  it('边界：锚点本身已越过水位 → 零长窗口 too-soon，gapSkippedMs=0', () => {
+    const r = computeWindow({
+      lastEndMs: NOW + 1_000,
+      watermark: NOW,
+      hasRecordingSession: true,
+      nextMaterialStartMs: null,
+    });
+    console.log('[window] 锚点越过水位 →', JSON.stringify(r));
+    expect(r.startMs).toBe(NOW + 1_000);
+    expect(r.endMs).toBe(r.startMs);
+    expect(r.skip).toBe('too-soon');
+    expect(r.gapSkippedMs).toBe(0);
+  });
+
+  it('落到素材后锚点能持续推进：用上一轮 endMs + 下一批素材再算 → 逐窗滚动', () => {
+    const first = computeWindow({
+      lastEndMs: NOW - FOUR_DAYS,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: NOW - 600_000,
+    });
     const next = computeWindow({
       lastEndMs: first.endMs,
-      watermark: NOW + WINDOW_MS,
-      hasRecordingSession: true,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: first.endMs, // 下一批素材正好接在上一窗口尾部
     });
-    console.log('[window] 前移后继续 →', JSON.stringify(first), JSON.stringify(next));
-    expect(first.jumped).toBe(true);
-    expect(next.jumped).toBe(false);
+    console.log('[window] 逐窗滚动 →', JSON.stringify(first), JSON.stringify(next));
+    expect(first.startMs).toBe(NOW - 600_000);
+    expect(first.endMs).toBe(NOW - 600_000 + MAX_WINDOW_MS);
     expect(next.startMs).toBe(first.endMs);
-    expect(next.endMs).toBe(NOW + WINDOW_MS);
+    expect(next.gapSkippedMs).toBe(0);
+    expect(next.endMs).toBe(first.endMs + MAX_WINDOW_MS);
     expect(next.skip).toBeNull();
   });
 
-  it('边界：落后恰好 MAX_WINDOW_MS + WINDOW_MS（420s）→ 不前移，保持原截断语义', () => {
-    const r = computeWindow({ lastEndMs: NOW - JUMP_THRESHOLD, watermark: NOW, hasRecordingSession: true });
-    console.log('[window] 前移边界（不前移）→', JSON.stringify(r));
-    expect(r.jumped).toBe(false);
-    expect(r.skippedMs).toBe(0);
-    expect(r.startMs).toBe(NOW - JUMP_THRESHOLD);
-    expect(r.endMs).toBe(NOW - WINDOW_MS); // startMs + MAX_WINDOW_MS
-    expect(r.skip).toBeNull();
-  });
-
-  it('边界 +1ms：落后 420_001ms → 前移，skippedMs 恰好是被放弃的那 120_001ms', () => {
-    const lag = JUMP_THRESHOLD + 1;
-    const r = computeWindow({ lastEndMs: NOW - lag, watermark: NOW, hasRecordingSession: true });
-    console.log('[window] 前移边界（前移）→', JSON.stringify(r));
-    expect(r.jumped).toBe(true);
-    expect(r.startMs).toBe(NOW - MAX_WINDOW_MS);
-    expect(r.skippedMs).toBe(NOW - MAX_WINDOW_MS - (NOW - lag));
-    expect(r.skip).toBeNull();
-  });
-
-  it('全部 done（无 recording 会话）时同样前移，避免停录后残留的死锁锚点', () => {
-    const r = computeWindow({ lastEndMs: NOW - FOUR_DAYS, watermark: NOW, hasRecordingSession: false });
-    console.log('[window] done 也前移 →', JSON.stringify(r));
-    expect(r.jumped).toBe(true);
-    expect(r.startMs).toBe(NOW - MAX_WINDOW_MS);
+  // ⚠️ 已知残留边界（如实记录，非期望行为）：会话全部结束后，若锚点之后只剩「贴着水位的一小段素材」，
+  // 起点落到素材上反而把窗口压到 < TAIL_WINDOW_MS ⇒ too-soon ⇒ 这段尾巴补不上（锚点也不再前进）。
+  // 本地 E2E 房间 BKFCAP 实测复现：22 段补了 21 段，最后 1 段（cap-21）永远停在 remainingMs=63000 里。
+  // 不跨过空档的话窗口是 [锚点, 水位)，长度够也盖得住这段素材 —— 但那会让「锚点落后很久 + 只有孤立尾段」
+  // 的场景退回 4 天死锁，故本轮按简报给定的规则实现，此处只把该边界钉住，改动时会被这条用例提醒。
+  it('已知残留：结束后只剩贴水位的孤立尾段 → span=3s < TAIL_WINDOW_MS ⇒ too-soon（尾段补不上）', () => {
+    const anchor = NOW - 63_000; // 上一条摘要的 end_ms（E2E 实测值）
+    const tail = NOW - 3_000; // 尾段长 3s，abs_end_ms 恰好就是水位
+    const r = computeWindow({
+      lastEndMs: anchor,
+      watermark: NOW,
+      hasRecordingSession: false,
+      nextMaterialStartMs: tail,
+    });
+    console.log('[window] 孤立尾段（已知残留）→', JSON.stringify(r));
+    expect(r.startMs).toBe(tail);
     expect(r.endMs).toBe(NOW);
-    expect(r.skip).toBeNull();
+    expect(r.endMs - r.startMs).toBe(3_000);
+    expect(r.skip).toBe('too-soon');
+    expect(r.gapSkippedMs).toBe(60_000);
+  });
+});
+
+// 模拟调用方那条查询：SELECT MIN(abs_start_ms) WHERE abs_end_ms > 锚点（段长 SEG_LEN_MS）
+const SEG_LEN_MS = 3_000;
+function nextMaterialOf(starts: number[], anchor: number): number | null {
+  return starts.find((t) => t + SEG_LEN_MS > anchor) ?? null;
+}
+
+describe('computeWindow：积压逐窗追补（死锁不可能复现）', () => {
+  const FOUR_DAYS = 4 * 24 * 3600 * 1000;
+
+  it('密集积压 4 天：每轮窗口严格前进直到覆盖水位，且 1152 条素材一条不落', () => {
+    const STEP = 60_000;
+    const starts: number[] = [];
+    for (let t = NOW - FOUR_DAYS; t <= NOW - 30_000; t += STEP) starts.push(t);
+
+    let anchor = NOW - FOUR_DAYS - 300_000; // 上一条摘要停在这里（比第一条素材还早 5 分钟）
+    const covered = starts.map(() => false);
+    let rounds = 0; // 只数「真的推进了的窗口」
+    while (rounds < 5_000) {
+      const nm = nextMaterialOf(starts, anchor);
+      if (nm === null) break;
+      const w = computeWindow({
+        lastEndMs: anchor,
+        watermark: NOW,
+        hasRecordingSession: false,
+        nextMaterialStartMs: nm,
+      });
+      if (w.skip) break;
+      // 死锁的两个必要条件都被堵死：窗口非空、右端严格越过锚点
+      expect(w.endMs).toBeGreaterThan(w.startMs);
+      expect(w.endMs).toBeGreaterThan(anchor);
+      expect(w.endMs - w.startMs).toBeLessThanOrEqual(MAX_WINDOW_MS);
+      starts.forEach((t, i) => {
+        if (t >= w.startMs && t < w.endMs) covered[i] = true;
+      });
+      rounds++;
+      anchor = w.endMs;
+      if (anchor >= NOW) break;
+    }
+    console.log('[window] 密集积压 rounds=', rounds, 'anchor=', anchor, 'NOW=', NOW);
+    expect(anchor).toBeGreaterThanOrEqual(NOW);
+    expect(covered.every(Boolean)).toBe(true);
+    // 第 1 轮跨过起点前那 5 分钟空档并吃满一个窗口，之后每轮都吃满 MAX_WINDOW_MS：
+    // 1 + (FOUR_DAYS - MAX_WINDOW_MS) / MAX_WINDOW_MS = 1152 轮（没退化成「一条素材一轮」）
+    expect(rounds).toBe(1 + (FOUR_DAYS - MAX_WINDOW_MS) / MAX_WINDOW_MS);
   });
 
-  it('前移后的 span 恒为 MAX_WINDOW_MS，不会因 minSpan 判成 too-soon（死锁不可能复现）', () => {
-    for (const lag of [JUMP_THRESHOLD + 1, 600_000, 3600_000, FOUR_DAYS, 30 * FOUR_DAYS]) {
-      for (const rec of [true, false]) {
-        const r = computeWindow({ lastEndMs: NOW - lag, watermark: NOW, hasRecordingSession: rec });
-        expect(r.jumped).toBe(true);
-        expect(r.endMs - r.startMs).toBe(MAX_WINDOW_MS);
-        expect(r.skip).toBeNull();
-      }
+  it('稀疏积压（素材成团、团之间约 1 天空档）→ 空档被跨过，每团素材仍被覆盖', () => {
+    const bursts = [NOW - 3 * 86_400_000, NOW - 2 * 86_400_000, NOW - 90_000];
+    const starts: number[] = [];
+    for (const b of bursts) for (let k = 0; k < 4; k++) starts.push(b + k * 8_000);
+    starts.sort((a, b) => a - b);
+
+    let anchor = NOW - FOUR_DAYS;
+    const covered = starts.map(() => false);
+    const gaps: number[] = [];
+    let rounds = 0; // 只数「真的推进了的窗口」
+    while (rounds < 100) {
+      const nm = nextMaterialOf(starts, anchor);
+      if (nm === null) break;
+      const w = computeWindow({
+        lastEndMs: anchor,
+        watermark: NOW,
+        hasRecordingSession: false,
+        nextMaterialStartMs: nm,
+      });
+      if (w.skip) break;
+      gaps.push(w.gapSkippedMs);
+      starts.forEach((t, i) => {
+        if (t >= w.startMs && t < w.endMs) covered[i] = true;
+      });
+      rounds++;
+      anchor = w.endMs;
     }
+    console.log(
+      '[window] 稀疏积压 rounds=',
+      rounds,
+      'gaps(s)=',
+      gaps.map((g) => Math.round(g / 1000)),
+      'anchor=',
+      anchor
+    );
+    expect(rounds).toBe(3); // 三团素材 ⇒ 三个窗口，团间空档不占窗口
+    expect(covered.every(Boolean)).toBe(true);
+    expect(gaps[0]).toBe(86_400_000); // 第一轮跨过整整一天的空档（空档内无素材，跨过 ≠ 丢素材）
+    expect(gaps[1]).toBe(86_400_000 - MAX_WINDOW_MS);
+    expect(anchor).toBe(NOW); // 最后一团贴着水位，窗口右端收到水位上
   });
 });

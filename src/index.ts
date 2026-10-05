@@ -115,12 +115,18 @@ async function sweepSummaries(env: Bindings) {
 
   for (const r of rooms) {
     try {
-      const res = await maybeSummarize(env, r.room_id);
-      if (res.ok && !res.skipped) {
+      // catchUp：cron 是积压补录的驱动源（每 2 分钟一轮），一次调用沿素材连续推进多个窗口，
+      // 否则锚点落后几天时要跑上百轮才补得完。前端催 / 手动 run 仍是单窗口，不走这里。
+      const res = await maybeSummarize(env, r.room_id, { catchUp: true });
+      // 判定按 windows 而非 skipped：追补一轮里常见「前几个窗口落库、最后一个窗口 skip」，
+      // 此时 skipped 有值但确实补出了摘要，用旧判定会整条静默。
+      // 每窗的 segs/logs/latency 已由 summarizeOneWindow 打过，这里只报本轮汇总。
+      if (res.windows) {
         console.info(
-          `[summary] sweep room=${r.room_id} segs=${res.segments} logs=${res.logs} latency=${res.latencyMs}ms`
+          `[summary] sweep room=${r.room_id} windows=${res.windows} remainingMs=${res.remainingMs}`
         );
-      } else if (!res.ok) {
+      }
+      if (!res.ok) {
         console.warn(`[summary] sweep-failed room=${r.room_id} err=${res.error}`);
       }
     } catch (e) {
