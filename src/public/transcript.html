@@ -231,7 +231,31 @@ let uploading = false;
 let sessionId = null, chunkSeq = 0;
 let ws = null, myCharId = '', myName = '';
 let summaryTimer = null;
+// 事件摘要开关（GM 在房间面板控制，默认关）。关着时不能启动轮询：
+// 每 60s 无条件 POST /summaries/run 纯属浪费 —— 服务端会直接返回 skipped:'disabled'，
+// 但每次仍要花一次 D1 读，且多人同时在录音页时成倍放大。
+let summaryEnabled = false;
 let segCount = 0;
+
+// 依据开关状态启停摘要轮询（幂等：先清后建）
+function syncSummaryTimer() {
+  if (summaryTimer) { clearInterval(summaryTimer); summaryTimer = null; }
+  if (!summaryEnabled) return;
+  summaryTimer = setInterval(() => {
+    if (!sessionId) return;
+    fetch(`/api/rooms/${encodeURIComponent(roomCode)}/summaries/run`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.ok && !d.skipped) {
+          console.info(`[summary] 前端催出摘要 segs=${d.segments} logs=${d.logs} ${d.latencyMs}ms`);
+        }
+      })
+      .catch((e) => console.warn('[summary] 前端触发失败:', e.message));
+  }, 60000);
+}
 
 function showMsg(text, kind) {
   const el = $('msg');
@@ -526,6 +550,11 @@ function connectWs() {
         if (who === myName) return;    // 自己的已本地显示，避免重复
         line(hhmmss(s.startMs || s.endMs || Date.now()), who, s.text, false);
       });
+    } else if (m.type === 'summary-toggled') {
+      summaryEnabled = !!m.enabled;
+      console.info(`[summary] 开关变更 room=${m.roomId} enabled=${summaryEnabled}`);
+      sysLine(summaryEnabled ? 'GM 已开启事件摘要：开始每 60s 催一次' : 'GM 已关闭事件摘要：停止催摘要');
+      syncSummaryTimer();
     }
   };
 }
@@ -583,24 +612,16 @@ async function start() {
     setState('记录中（VAD 自动切分）', true);
     sysLine(`已开始记录 · 采样率 ${sampleRate}Hz · 停顿 ${VAD.silenceMs}ms 切分 · 模型 ${sess.model}`);
 
-    // 第三条触发路径：前端每分钟催一次摘要。
+    // 第三条触发路径：前端每分钟催一次摘要 —— 但**只在 GM 已开启事件摘要时**才发。
     // 服务端有窗口判断（距上次不足 2 分钟会返回 too-soon），所以多客户端同时催不会产生重复；
     // 这样即使请求内 waitUntil 被回收、cron 传播延迟，只要有人在录音就仍会出摘要。
-    if (summaryTimer) clearInterval(summaryTimer);
-    summaryTimer = setInterval(() => {
-      if (!sessionId) return;
-      fetch(`/api/rooms/${encodeURIComponent(roomCode)}/summaries/run`, {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + token },
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          if (d && d.ok && !d.skipped) {
-            console.info(`[summary] 前端催出摘要 segs=${d.segments} logs=${d.logs} ${d.latencyMs}ms`);
-          }
-        })
-        .catch((e) => console.warn('[summary] 前端触发失败:', e.message));
-    }, 60000);
+    summaryEnabled = room.summaryEnabled === true;
+    syncSummaryTimer();
+    sysLine(
+      summaryEnabled
+        ? '事件摘要已开启：每 60s 催一次，服务端约每 2 分钟出一条'
+        : '事件摘要未开启：本页不催摘要（GM 可在房间页「跑团事件记录」标题栏开启）'
+    );
   } catch (e) {
     setState('未开始', false);
     showMsg('启动失败：' + e.message, 'error');

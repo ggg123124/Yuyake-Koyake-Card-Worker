@@ -1,0 +1,28 @@
+-- 迁移：事件摘要开关（rooms.summary_enabled，GM 控制，默认关闭）
+-- 日期：2026-10-05
+-- 背景：摘要功能改为「交给 GM 来开，按了之后才开始工作」。
+--       门控放在 maybeSummarize 的最前面（一次主键读），关掉的房间不再执行
+--       水位/素材查询、不再调 AI，cron 也不会把它选进循环 —— 这是本轮省读量的关键。
+--       默认 0（关）：存量房间升级后摘要一律停摆，需 GM 显式开启，不会偷偷消耗额度。
+--
+-- ⚠️ 幂等性 / 重复执行会发生什么（SQLite 无 ALTER TABLE ADD COLUMN IF NOT EXISTS，
+--    D1 的 SQL 文件也不支持条件分支，故沿用本项目既有惯例：**执行前必须预检**）：
+--      · 首次执行：ALTER 成功，rooms 多一列 summary_enabled，存量行按 DEFAULT 0 回填。
+--      · 重复执行：预检会返回 has_col=1；此时若仍执行 ALTER，SQLite 报
+--        `duplicate column name: summary_enabled` 并中止整个批次。本文件只有这一条写语句，
+--        报错发生在写入之前 ⇒ **库状态不变、不会丢数据**，但命令会返回非 0，属预期行为。
+--      · 由 schema.sql 建的新库已含该列（见 schema.sql 的 rooms 定义），对新库执行本文件
+--        同样会得到 duplicate column 报错 —— 新库不需要跑本文件。
+--
+-- 执行前预检（必须为 0 才执行）：
+--    SELECT (SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name='summary_enabled') AS has_col;
+--
+-- 执行后回读校验（has_col 必须为 1，null_cnt 必须为 0）：
+--    SELECT (SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name='summary_enabled') AS has_col,
+--           (SELECT COUNT(*) FROM rooms WHERE summary_enabled IS NULL) AS null_cnt,
+--           (SELECT COUNT(*) FROM rooms WHERE summary_enabled = 1) AS enabled_cnt;
+--
+-- 已执行记录：2026-10-05 于本地库 .wrangler/e2e-brief 验证「无该列 → ALTER → 回读 has_col=1」
+--            与「已有该列 → 重复执行报 duplicate column 且库状态不变」两种路径（生产库由主控执行）
+
+ALTER TABLE rooms ADD COLUMN summary_enabled INTEGER NOT NULL DEFAULT 0;

@@ -78,14 +78,23 @@ async function handleScheduled(env: Bindings): Promise<void> {
 async function sweepSummaries(env: Bindings) {
   // 选房条件按「素材到达时间」而非 abs_start_ms：abs_start_ms 曾是客户端压缩过的时间基准，
   // 会漏掉仍活跃的房间（线上实测开团期间 scanned 反复为 0）。created_at 是素材真正入库的墙钟时间，不受该 bug 影响。
-  const sinceNote = "ts.created_at >= datetime('now','-10 minutes')";
+  // 不能改成按 rooms.last_active_at 选房：那会漏掉「只在录音、没别的动作」的房间。
+  //
+  // INDEXED BY 是必须的，不是装饰：光建了 idx_ts_segments_created 不够，实测（本地库 EXPLAIN QUERY PLAN）
+  // SQLite 仍会选 `SCAN ts USING INDEX idx_ts_segments_room_end` —— 因为那条索引按 room_id 有序，
+  // 能让 DISTINCT 白拿一次免排序，代价是把整张 transcript_segments 扫一遍（线上 2468 行/次）。
+  // 加 INDEXED BY 后计划变成 `SEARCH ts USING INDEX idx_ts_segments_created (created_at>?)`，
+  // 只读近 10 分钟那一段。索引若被删，SQLite 会在 prepare 阶段直接报 no such index（响亮失败，不静默降级）。
+  const sinceNote = "ts.created_at >= datetime('now','-10 minutes') AND r.summary_enabled = 1";
   // JOIN rooms：房间销毁后其转写原始数据仍留在库中（内容已进归档快照），
   // 若不限定房间仍存在，sweep 会对着已销毁房间反复生成摘要。
+  // r.summary_enabled = 1：摘要开关关掉的房间根本不进循环（否则每 2 分钟白烧一整轮水位/素材查询）。
   const rows = await env.DB.prepare(
     `SELECT DISTINCT ts.room_id AS room_id
-     FROM transcript_segments ts
+     FROM transcript_segments AS ts INDEXED BY idx_ts_segments_created
      JOIN rooms r ON r.id = ts.room_id
-     WHERE ts.created_at >= datetime('now','-10 minutes') LIMIT 50`
+     WHERE ts.created_at >= datetime('now','-10 minutes')
+       AND r.summary_enabled = 1 LIMIT 50`
   )
     .all<{ room_id: string }>();
 
@@ -99,7 +108,9 @@ async function sweepSummaries(env: Bindings) {
   } catch (e) {
     console.warn(`[summary] heartbeat-failed err=${e instanceof Error ? e.message : String(e)}`);
   }
-  console.info(`[summary] sweep 扫描到 ${rooms.length} 个活跃房间（近 10 分钟有转写到库且仍存在）`);
+  console.info(
+    `[summary] sweep 扫描到 ${rooms.length} 个待摘要房间（近 10 分钟有转写到库、房间仍存在且已开启事件摘要）`
+  );
   if (!rooms.length) return;
 
   for (const r of rooms) {

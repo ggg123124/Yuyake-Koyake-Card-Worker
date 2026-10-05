@@ -491,6 +491,52 @@ route.post('/:code/summaries/run', authMiddleware, async (c) => {
   return c.json(result);
 });
 
+// ---- 事件摘要开关（GM 控制，默认关；关着时摘要链路一律短路，不查素材也不调 AI） ----
+route.post('/:code/summary-toggle', authMiddleware, async (c) => {
+  const code = c.req.param('code');
+  const userId = c.get('userId');
+  const db = c.env.DB;
+
+  const gm = await db
+    .prepare(`SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ? AND role = 'gm'`)
+    .bind(code, userId)
+    .first();
+  if (!gm) return c.json({ error: '只有 GM 可以开关事件摘要' }, 403);
+
+  const body = (await c.req.json().catch(() => null)) as { enabled?: unknown } | null;
+  // 字段缺失/类型不对必须明确报错，不能静默当成 false 写库（沿用词表接口的约定）
+  if (!body || typeof body.enabled !== 'boolean') {
+    return c.json({ error: '请求体需含 enabled 字段（布尔）' }, 400);
+  }
+  const enabled = body.enabled;
+
+  const r = await db
+    .prepare('UPDATE rooms SET summary_enabled = ? WHERE id = ?')
+    .bind(enabled ? 1 : 0, code)
+    .run();
+  if (!(r.meta?.changes ?? 0)) return c.json({ error: '房间不存在' }, 404);
+
+  // 广播给房内所有人：前端据此更新开关 UI、并启停 transcript.html 的摘要轮询
+  try {
+    const stub = c.env.ROOM_DO.get(c.env.ROOM_DO.idFromName(code));
+    await stub.fetch(
+      new Request(`http://internal/rooms/${code}/broadcast-summary-toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Room-Id': code },
+        body: JSON.stringify({ enabled }),
+      })
+    );
+  } catch (e) {
+    // 广播失败不能回滚已写入的开关状态：留痕但不抛（前端下次进房会从房间详情读到正确值）
+    console.warn(
+      `[summary] toggle-broadcast-failed room=${code} err=${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
+  console.info(`[summary] toggle room=${code} user=${userId} enabled=${enabled}`);
+  return c.json({ ok: true, summaryEnabled: enabled });
+});
+
 // ---- 房间词表（成员可读，GM 可写） ----
 route.get('/:code/transcript/glossary', authMiddleware, async (c) => {
   const code = c.req.param('code');

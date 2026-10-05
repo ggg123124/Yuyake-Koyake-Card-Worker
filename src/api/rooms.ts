@@ -200,7 +200,7 @@ route.get('/:code', authMiddleware, async (c) => {
   const userId = c.get('userId');
 
   const room = await db
-    .prepare('SELECT id, name, gm_user_id, phase, created_at FROM rooms WHERE id = ?')
+    .prepare('SELECT id, name, gm_user_id, phase, created_at, summary_enabled FROM rooms WHERE id = ?')
     .bind(roomId)
     .first<{
       id: string;
@@ -208,6 +208,7 @@ route.get('/:code', authMiddleware, async (c) => {
       gm_user_id: string;
       phase: string;
       created_at: string;
+      summary_enabled: number;
     }>();
 
   if (!room) {
@@ -262,6 +263,7 @@ route.get('/:code', authMiddleware, async (c) => {
     gmUserId: room.gm_user_id,
     phase: room.phase,
     createdAt: room.created_at,
+    summaryEnabled: room.summary_enabled === 1,
     members: (members.results || []).map((m) => ({
       characterId: m.character_id,
       userId: m.user_id,

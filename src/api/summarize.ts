@@ -85,20 +85,41 @@ export interface WindowResult {
   startMs: number;
   endMs: number;
   skip: 'too-soon' | null;
+  // 锚点前移留痕：true = startMs 被从 lastEndMs 强行推到 watermark 附近，中间那段时间不再被任何摘要覆盖
+  jumped: boolean;
+  skippedMs: number;
 }
 
 // 纯函数：由「上一条摘要 end_ms + 素材水位」算出本条摘要窗口，便于单测。
 export function computeWindow(inp: WindowInput): WindowResult {
   const { lastEndMs, watermark, hasRecordingSession } = inp;
-  const startMs = lastEndMs ?? Math.max(0, watermark - WINDOW_MS);
+  let startMs = lastEndMs ?? Math.max(0, watermark - WINDOW_MS);
+
+  // 锚点前移（2026-10-01 房间 SVS3C「4 天 0 摘要」死锁的修法）：
+  // 下面 endMs = min(watermark, startMs + MAX_WINDOW_MS)，所以一旦锚点落后到
+  // startMs + MAX_WINDOW_MS < watermark - WINDOW_MS（即落后超过 MAX_WINDOW_MS + WINDOW_MS = 7 分钟），
+  // 窗口就永远只能是 [lastEnd, lastEnd + 5min) 这段「陈旧切片」：切片里没素材 ⇒ 生成不了摘要 ⇒
+  // 锚点永远推不动 ⇒ 之后所有素材都进不了摘要（实测该房 1103 条语音段全部漏掉）。
+  // 故把 startMs 前移到 watermark - MAX_WINDOW_MS：窗口必定盖住最近的素材，且 span 恰为 MAX_WINDOW_MS
+  // （≥ WINDOW_MS），不会再判 too-soon。代价是跳过的那段时间不再被覆盖 —— 属可观测的取舍，
+  // 由 maybeSummarize 拿 jumped/skippedMs 去 WARN（本函数是纯函数，禁止在这里打日志）。
+  let jumped = false;
+  let skippedMs = 0;
+  if (startMs + MAX_WINDOW_MS < watermark - WINDOW_MS) {
+    const jumpedTo = watermark - MAX_WINDOW_MS;
+    skippedMs = jumpedTo - startMs;
+    startMs = jumpedTo;
+    jumped = true;
+  }
+
   // 单条摘要最长覆盖 MAX_WINDOW_MS（事故里出现过 75 分钟超长窗口 → 模型只能空泛复读前情提要）
   const endMs = Math.min(watermark, startMs + MAX_WINDOW_MS);
   const span = endMs - startMs;
   // 仍在录音：窗口不足 WINDOW_MS 就等下一轮（too-soon）；
   // 全部 done：允许用 TAIL_WINDOW_MS 的收尾窗口把最后素材收掉，否则停录后的末段会被永久留在库外。
   const minSpan = hasRecordingSession ? WINDOW_MS : TAIL_WINDOW_MS;
-  if (span < minSpan) return { startMs, endMs, skip: 'too-soon' };
-  return { startMs, endMs, skip: null };
+  if (span < minSpan) return { startMs, endMs, skip: 'too-soon', jumped, skippedMs };
+  return { startMs, endMs, skip: null, jumped, skippedMs };
 }
 
 const RES_LABEL: Record<string, string> = { dream: '梦点', feeling: '心意点', wonder: '奇迹点' };
@@ -232,13 +253,31 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   const db = env.DB;
   const now = Date.now();
 
+  // 门控必须是第一件事：下面两条水位查询跑在 skip 判定之前，即使一条摘要都不生成也要烧掉数千行读量，
+  // 所以开关关着时连它们都不能执行。这里只花 1 行（rooms 主键读）。
+  // 房间不存在时 gate 为 null，同样按「未开启」短路 —— 但日志如实区分，不静默当成关。
+  const gate = await db
+    .prepare('SELECT summary_enabled FROM rooms WHERE id = ?')
+    .bind(roomId)
+    .first<{ summary_enabled: number | null }>();
+  if (gate?.summary_enabled !== 1) {
+    console.info(
+      `[summary] skip room=${roomId} reason=disabled summary_enabled=${
+        gate ? gate.summary_enabled : '房间不存在'
+      }（GM 可在房间面板开启；本次未做水位/素材查询、未调 AI）`
+    );
+    return { ok: true, skipped: 'disabled' };
+  }
+
   const last = await db
     .prepare('SELECT end_ms FROM room_summaries WHERE room_id = ? ORDER BY end_ms DESC LIMIT 1')
     .bind(roomId)
     .first<{ end_ms: number }>();
   const lastEndMs = last?.end_ms ?? null;
 
-  // 素材水位（房间维度）：已入库语音段的最大 abs_end_ms
+  // 素材水位（房间维度）：已入库语音段的最大 abs_end_ms。
+  // SQL 不变，靠新索引 idx_ts_segments_room_end (room_id, abs_end_ms) 让 SQLite 直接取索引末端，
+  // 不再把该房全部段落读一遍（实测旧计划 1886 行）。
   const segMax = await db
     .prepare('SELECT MAX(abs_end_ms) AS mx FROM transcript_segments WHERE room_id = ?')
     .bind(roomId)
@@ -246,18 +285,26 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   const segMaxAbsEndMs = segMax?.mx ?? null;
 
   // 素材水位（会话维度）+ 最近到库时间：recv 用 MAX(created_at)（datetime('now') 文本，UTC）
+  // 两处降读量改动，语义与旧的 LEFT JOIN + GROUP BY 版本等价：
+  //   ① WHERE 加 s.status='recording'：pickWatermark 内部只使用 status==='recording' 的会话
+  //      （其它状态在函数里被 filter 掉），已结束的会话往往是多数，不参与扫描即省掉它们的段落。
+  //   ② 相关子查询替代 JOIN + GROUP BY：新索引 (session_id, abs_end_ms) / (session_id, created_at)
+  //      让每个 MAX 直接取索引末端（实测旧 JOIN 单次烧 3811 行）。无段落的会话子查询返回 NULL，
+  //      与 LEFT JOIN 的行为一致。
   const sessRes = await db
     .prepare(
-      `SELECT s.id AS id, s.status AS status, MAX(seg.abs_end_ms) AS mx, MAX(seg.created_at) AS recv
+      `SELECT s.id AS id, s.status AS status,
+              (SELECT MAX(abs_end_ms) FROM transcript_segments seg WHERE seg.session_id = s.id) AS mx,
+              (SELECT MAX(created_at)  FROM transcript_segments seg WHERE seg.session_id = s.id) AS recv
        FROM transcript_sessions s
-       LEFT JOIN transcript_segments seg ON seg.session_id = s.id
-       WHERE s.room_id = ?
-       GROUP BY s.id`
+       WHERE s.room_id = ? AND s.status = 'recording'`
     )
     .bind(roomId)
     .all<{ id: string; status: string; mx: number | null; recv: string | null }>();
   const sessRows = sessRes.results || [];
-  const hasRecordingSession = sessRows.some((r) => r.status === 'recording');
+  // 等价性：SQL 已把结果限定为 recording 会话，故「结果非空」⇔「存在 recording 行」，
+  // 与旧的 sessRows.some(r => r.status === 'recording') 同义（且省掉遍历）。
+  const hasRecordingSession = sessRows.length > 0;
 
   const { watermark, pinned, lagMs } = pickWatermark(
     segMaxAbsEndMs,
@@ -267,12 +314,19 @@ export async function maybeSummarize(env: Bindings, roomId: string): Promise<Sum
   if (watermark === null) {
     // 没有任何素材：沿用 not-enough-material 跳过（留痕，不静默）
     console.info(
-      `[summary] skip room=${roomId} reason=not-enough-material 无素材水位 segMax=${segMaxAbsEndMs} sessions=${sessRows.length}`
+      `[summary] skip room=${roomId} reason=not-enough-material 无素材水位 segMax=${segMaxAbsEndMs} recordingSessions=${sessRows.length}`
     );
     return { ok: true, skipped: 'not-enough-material' };
   }
 
   const win = computeWindow({ lastEndMs, watermark, hasRecordingSession });
+  if (win.jumped) {
+    // 锚点前移必须留痕（禁静默）：被跳过的那段时间不会再被任何摘要覆盖
+    console.warn(
+      `[summary] anchor-jump room=${roomId} 摘要锚点严重落后已前移 lastEndMs=${lastEndMs} watermark=${watermark} ` +
+        `新起点=${win.startMs} 跳过=${Math.round(win.skippedMs / 1000)}s（约 ${(win.skippedMs / 60000).toFixed(1)} 分钟素材不再有摘要覆盖）`
+    );
+  }
   if (win.skip) {
     const span = win.endMs - win.startMs;
     console.info(

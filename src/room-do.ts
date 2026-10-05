@@ -78,6 +78,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
 
+    // RPC 调用：广播「事件摘要开关」状态变更（GM 在房间面板切换后，房内所有人同步）
+    if (url.pathname.endsWith('/broadcast-summary-toggle')) {
+      const body = (await request.json().catch(() => ({}))) as { enabled?: boolean };
+      await this.broadcastSummaryToggle(body);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // RPC 调用：广播事件摘要（LLM 每约 2 分钟汇总一次）
     if (url.pathname.endsWith('/broadcast-summary')) {
       const body = (await request.json().catch(() => ({}))) as {
@@ -636,7 +645,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const db = this.env.DB;
 
     const room = await db
-      .prepare('SELECT id, name, gm_user_id, phase, created_at FROM rooms WHERE id = ?')
+      .prepare('SELECT id, name, gm_user_id, phase, created_at, summary_enabled FROM rooms WHERE id = ?')
       .bind(this.roomId)
       .first<{
         id: string;
@@ -644,6 +653,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         gm_user_id: string;
         phase: string;
         created_at: string;
+        summary_enabled: number;
       }>();
 
     if (!room) return null;
@@ -687,6 +697,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         gmUserId: room.gm_user_id,
         phase: room.phase,
         createdAt: room.created_at,
+        summaryEnabled: room.summary_enabled === 1,
       },
       members: (members.results || []).map((m) => ({
         characterId: m.character_id,
@@ -809,6 +820,26 @@ export class RoomDurableObject extends DurableObject<Env> {
     console.info(
       `[do] summary-update room=${this.roomId} sent=${ok} chars=${(payload.summary || '').length}`
     );
+  }
+
+  // 事件摘要开关：GM 切换后广播给房间内所有人（前端据此启停摘要轮询、更新开关 UI）
+  async broadcastSummaryToggle(payload: { enabled?: boolean }) {
+    const enabled = payload.enabled === true;
+    const message: WSResponse = {
+      type: 'summary-toggled',
+      roomId: this.roomId,
+      enabled,
+    };
+    let ok = 0;
+    for (const [ws] of this.sessions) {
+      try {
+        this.send(ws, message);
+        ok++;
+      } catch (e) {
+        console.warn('[do] summary-toggle broadcast failed for a socket:', e);
+      }
+    }
+    console.info(`[do] summary-toggled room=${this.roomId} enabled=${enabled} sent=${ok}`);
   }
 
   async broadcastBondsUpdate(changedCharacterId?: string) {
